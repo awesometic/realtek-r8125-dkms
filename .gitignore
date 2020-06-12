@@ -1,0 +1,4 @@
+debian/.debhelper*
+debian/debhelper*
+debian/realtek-r8125-dkms*
+debian/files
