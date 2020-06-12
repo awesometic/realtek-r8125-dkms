@@ -1,0 +1,6 @@
+realtek-r8125-dkms for Debian
+
+The driver source can be found here:
+ https://www.realtek.com/en/component/zoo/category/network-interface-controllers-10-100-1000m-gigabit-ethernet-pci-express-software
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Fri, 12 Jun 2020 12:27:29 +0900

@@ -1,1 +1,2 @@
-# You must remove unused comment lines for the released package.
+#!/usr/bin/dh-exec
+src Makefile LICENSE README.md REALTEK_README.txt usr/src/realtek-r8125-${DEB_VERSION_UPSTREAM}

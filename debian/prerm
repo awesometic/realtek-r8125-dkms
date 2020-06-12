@@ -1,8 +1,15 @@
 #!/bin/sh
+
+NAME=r8125
+VERSION=9.003.05
+
 set -e
 
 case "$1" in
     remove|upgrade|deconfigure)
+      if [  "`dkms status -m $NAME`" ]; then
+         dkms remove -m $NAME -v $VERSION --all
+      fi
     ;;
 
     failed-upgrade)
@@ -15,6 +22,5 @@ case "$1" in
 esac
 
 
-#DEBHELPER#
 
 exit 0
