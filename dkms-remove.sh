@@ -7,6 +7,7 @@ else
   echo "About to run dkms removal steps..."
 fi
 
+DRV_DIR="$(pwd)"
 DRV_NAME=r8125
 DRV_VERSION=9.003.05
 

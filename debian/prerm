@@ -1,6 +1,6 @@
 #!/bin/sh
 
-NAME=r8125
+NAME=realtek-r8125
 VERSION=9.003.05
 
 set -e

@@ -35,7 +35,7 @@ all: clean modules install
 
 modules:
 ifeq ($(KFLAG),24x)
-	$(MAKE) -C src/ KVER=$(KVER) BASEDIR=$(BSRC) Makefile_linux24x modules
+	$(MAKE) -C src/ KVER=$(KVER) BASEDIR=$(BSRC) -f Makefile_linux24x modules
 else
 	$(MAKE) -C src/ KVER=$(KVER) BASEDIR=$(BSRC) modules
 endif
