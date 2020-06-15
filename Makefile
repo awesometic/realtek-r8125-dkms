@@ -30,6 +30,7 @@
 ################################################################################
 
 KFLAG := 2$(shell "$KVER" | sed -ne 's/^2\.[4]\..*/4/p')x
+BSRC ?= /lib/modules/$(shell uname -r)
 
 all: clean modules install
 
