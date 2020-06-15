@@ -1,5 +1,14 @@
-realtek-r8125-dkms (0.1-1) UNRELEASED; urgency=low
+realtek-r8125-dkms (9.003.05-1) stable; urgency=low
+
+  * Now DKMS working
+  * Change DKMS version by Debian package to the driver's version
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Tue, 16 Jun 2020 00:52:35 +0900
+
+realtek-r8125-dkms (0.1) UNRELEASED; urgency=low
 
   * Initial release
+  * This package will be installed but DKMS won't work
+    Do not install this version, otherwise your system will be corrupted
 
  -- Deokgyu Yang <secugyu@gmail.com>  Fri, 12 Jun 2020 12:27:29 +0900
