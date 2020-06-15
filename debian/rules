@@ -1,18 +1,25 @@
 #!/usr/bin/make -f
 
-include /usr/share/dpkg/pkg-info.mk
-export DEB_VERSION_UPSTREAM
+#export DH_VERBOSE=1
+
+#just use base version
+VERSION	:= $(shell dpkg-parsechangelog -S Version | sed 's/-.*//' | sed 's/+pristine//')
 
 %:
-	dh $@ --with dkms
+	dh $@ --parallel --with dkms
+
+override_dh_install:
+	dh_install dkms.conf REALTEK_README.txt Makefile usr/src/realtek-r8125-$(VERSION)
+	dh_install src/* usr/src/realtek-r8125-$(VERSION)/src
 
 override_dh_dkms:
-	dh_dkms -V $(DEB_VERSION_UPSTREAM)
+	dh_dkms -V $(VERSION)
 
 override_dh_fixperms:
 	dh_fixperms
 	find debian/realtek-r8125-dkms/usr/src -type f -exec chmod -x {} \;
 
+# Nothing to configure, build or auto-install
 override_dh_auto_configure:
 override_dh_auto_build:
 override_dh_auto_test:
