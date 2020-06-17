@@ -67,4 +67,4 @@ GPL-2 on Realtek driver and the debian packaing.
 ## References
 
 - [Realtek r8125 driver release page](https://www.realtek.com/en/component/zoo/category/network-interface-controllers-10-100-1000m-gigabit-ethernet-pci-express-software)
-- [aircrack-ng rtl8812au, where very helped to deal with DKMS](https://github.com/aircrack-ng/rtl8812au)
+- [ParrotSec's realtek-rtl88xxau-dkms, where got hint from](https://github.com/ParrotSec/realtek-rtl88xxau-dkms)
