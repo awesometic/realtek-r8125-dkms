@@ -12,6 +12,8 @@ Installation using the Debian package is recommended for the sake of getting the
 
 ### Debian package
 
+#### Released package file
+
 Download the latest Debian package from the Release tab on the Github repository.
 
 Then enter the following command.
@@ -26,7 +28,19 @@ If dependency error occurs, try to fix that with `apt` command.
 sudo apt install --fix-broken
 ```
 
-Launchpad PPA will be prepared.
+#### Launchpad PPA (Recommended)
+
+Add my Launchpad PPA.
+
+```bash
+sudo add-apt-repository ppa:awesometic/ppa
+```
+
+Then install the package using `apt` tool.
+
+```bash
+sudo apt install realtek-r8125-dkms
+```
 
 ### autorun.sh
 
