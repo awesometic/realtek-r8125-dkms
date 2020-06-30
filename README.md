@@ -33,7 +33,7 @@ sudo apt install --fix-broken
 Add my Launchpad PPA.
 
 ```bash
-sudo add-apt-repository ppa:awesometic/ppa
+sudo add-apt-repository ppa:hardkernel/ppa
 ```
 
 Then install the package using `apt` tool.
