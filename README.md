@@ -30,7 +30,7 @@ sudo apt install --fix-broken
 
 #### Launchpad PPA (Recommended)
 
-Add my Launchpad PPA.
+Add the Launchpad PPA.
 
 ```bash
 sudo add-apt-repository ppa:hardkernel/ppa
