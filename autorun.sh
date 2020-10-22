@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 
 # invoke insmod with all arguments we got
 # and use a pathname, as insmod doesn't look in . by default
