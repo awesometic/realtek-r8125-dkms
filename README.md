@@ -19,7 +19,7 @@ Download the latest Debian package from the Release tab on the Github repository
 Then enter the following command.
 
 ```bash
-sudo dpkg -i realtek-r8125-dkms_9.003.05-1_amd64.deb
+sudo dpkg -i realtek-r8125-dkms_9.004.01-1_amd64.deb
 ```
 
 If dependency error occurs, try to fix that with `apt` command.
