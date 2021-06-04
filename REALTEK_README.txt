@@ -10,10 +10,10 @@
 
 <Quick install with proper kernel settings>
 	Unpack the tarball :
-		# tar vjxf r8125-8.aaa.bb.tar.bz2
+		# tar vjxf r8125-9.aaa.bb.tar.bz2
 
 	Change to the directory:
-		# cd r8125-8.aaa.bb
+		# cd r8125-9.aaa.bb
 
 	If you are running the target kernel, then you should be able to do :
 
