@@ -4,9 +4,9 @@ This provides Realtek r8125 driver in DKMS way so that you can keep the latest d
 
 ## Installation
 
-There are 3 ways to install this DKMS module. Choose 1 as your tastes.
+There are 3 ways to install this DKMS module. Choose one as your tastes.
 
-Those are not interfering with each other. So you can do all 3 methods but don't need to.
+Those are not interfering with each other. So you can do all 3 methods but absolutely you don't need to.
 
 Installation using the Debian package is recommended for the sake of getting the newer driver.
 
@@ -19,8 +19,14 @@ Download the latest Debian package from the Release tab on the Github repository
 Then enter the following command.
 
 ```bash
-sudo dpkg -i realtek-r8125-dkms_9.005.01-1_amd64.deb
+sudo dpkg -i realtek-r8125-dkms*.deb
 ```
+
+> If multiple files selected by the wild card, you should type the specific version of the file.
+>
+> ```bash
+> sudo dpkg -i realtek-r8125-dkms_9.005.06-1.deb
+> ```
 
 If dependency error occurs, try to fix that with `apt` command.
 
@@ -51,6 +57,10 @@ Download or clone this repository and move to the extracted directory, then run 
 ```bash
 sudo ./autorun.sh
 ```
+
+For the file in this repository, I commented out the codes for removing r8169 driver if exists because some users use both r8169, r8125 simultaneously for some reason.
+
+If this causes any problem, you can check out this file and uncomment the code blocks then try again.
 
 ### dkms-install.sh
 
