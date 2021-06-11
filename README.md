@@ -58,10 +58,6 @@ Download or clone this repository and move to the extracted directory, then run 
 sudo ./autorun.sh
 ```
 
-For the file in this repository, I commented out the codes for removing r8169 driver if exists because some users use both r8169, r8125 simultaneously for some reason.
-
-If this causes any problem, you can check out this file and uncomment the code blocks then try again.
-
 ### dkms-install.sh
 
 This script is from aircrack-ng team. You can install the DKMS module by a simple command.
