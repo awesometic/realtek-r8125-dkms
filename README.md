@@ -1,5 +1,7 @@
 # Realtek r8125 DKMS
 
+![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/awesometic/realtek-r8125-dkms?sort=semver&style=for-the-badge)
+
 This provides Realtek r8125 driver in DKMS way so that you can keep the latest driver even after the kernel upgrade.
 
 ## Installation
