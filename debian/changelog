@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.006.04-2) stable; urgency=medium
+
+  * Add spinlock_t lock member back to the r8125_private struct
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Wed, 29 Sep 2021 20:39:07 +0900
+
 realtek-r8125-dkms (9.006.04-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.006.04
