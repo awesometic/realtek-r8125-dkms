@@ -2010,6 +2010,7 @@ struct rtl8125_private {
         unsigned int min_irq_nvecs;
         //struct msix_entry msix_entries[R8125_MAX_MSIX_VEC];
         struct net_device_stats stats;  /* statistics of net device */
+        spinlock_t lock;        /* spin lock flag */
         u32 msg_enable;
         u32 tx_tcp_csum_cmd;
         u32 tx_udp_csum_cmd;
