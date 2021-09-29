@@ -70,6 +70,34 @@ Download or clone this repository and move to the extracted directory, then run 
 sudo ./dkms-install.sh
 ```
 
+## Verify the module is loaded successfully
+
+After installing the DKMS package, you may not be able to use the new `r8125` module on the fly. This because the existing `r8169` module will be loaded priority to `r8125` so that it prevents working of the `r8125` module.
+
+Check if the `r8169` module loaded currently.
+
+```bash
+lsmod | grep -i r8169
+```
+
+If there is a result, maybe the `r8125` module wasn't loaded properly. You can check it out using `dmesg` too.
+
+To use the `r8125` module explicitly you can add the `r8169` module to not be loaded by adding it to a blacklist file.
+
+Enter the following command to configure the blacklist.
+
+```bash
+sudo tee -a /etc/modprobe.d/blacklist-r8169.conf > /dev/null <<EOT
+# To use r8125 driver explicitly
+blacklist r8169
+EOT
+```
+
+Then reboot to take effect.
+
+> - If you need to load both r8169 and r8125, maybe removing r8125 firmware could make it work. Please enter `sudo rm -f /lib/firmware/rtl_nic/rtl8125*` to remove all the r8125 firmwares on the system. But it is just a workaround, you should have to do this every time installing the new kernel version or new Linux firmware.
+> - In the case of the Debian package, I will update the scripts to make it do this during the installation.
+
 ## Debian package build
 
 You can build yourself this after installing some dependencies including `dkms`.
