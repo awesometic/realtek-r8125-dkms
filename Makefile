@@ -49,7 +49,7 @@ else
 	$(MAKE) -C src/ KVER=$(KVER) BASEDIR=$(BSRC) clean
 endif
 
-install:
+install: modules
 ifeq ($(KFLAG),24x)
 	$(MAKE) -C src/ KVER=$(KVER) BASEDIR=$(BSRC) -f Makefile_linux24x install
 else
