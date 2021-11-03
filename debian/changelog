@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.006.04-3) stable; urgency=medium
+
+  * Fix a potential dependency problem during Makefile
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Wed, 03 Nov 2021 15:55:27 +0900
+
 realtek-r8125-dkms (9.006.04-2) stable; urgency=medium
 
   * Add spinlock_t lock member back to the r8125_private struct
