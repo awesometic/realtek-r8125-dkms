@@ -33,7 +33,7 @@ jobs:
       uses: actions/checkout@v2
     - name: Install dependencies
       run: |
-        sudo apt-get update -qq && sudo apt-get install -y dh-make dpkg-dev devscripts fakeroot lintian
+        sudo apt-get update -qq && sudo apt-get install -y dh-make dpkg-dev devscripts fakeroot lintian dkms
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -53,10 +53,10 @@ jobs:
     - name: Init Version Info
       run: |
           grep '^PACKAGE_VERSION=.*' dkms.conf  | sed -r 's/^PACKAGE_VERSION="(.*)"/\1/'  > PACKAGE_VERSION
-          [ -s PACKAGE_VERSION ] && echo "PACKAGE_VERSION=_$(cat PACKAGE_VERSION)" >> $GITHUB_ENV
+          [ -s PACKAGE_VERSION ] && echo "PACKAGE_VERSION=$(cat PACKAGE_VERSION)" >> $GITHUB_ENV
           
           grep '^PACKAGE_NAME=.*' dkms.conf  | sed -r 's/^PACKAGE_NAME="(.*)"/\1/'  > PACKAGE_NAME
-          [ -s PACKAGE_NAME ] && echo "PACKAGE_NAME=_$(cat PACKAGE_NAME)" >> $GITHUB_ENV
+          [ -s PACKAGE_NAME ] && echo "PACKAGE_NAME=$(cat PACKAGE_NAME)" >> $GITHUB_ENV
           
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           
