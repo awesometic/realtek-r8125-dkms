@@ -59,7 +59,7 @@ jobs:
           [ -s PACKAGE_NAME ] && echo "PACKAGE_NAME=$(cat PACKAGE_NAME)" >> $GITHUB_ENV
           
           cd r8125-dkms
-          dpkg-parsechangelog -S Version | sed 's/-.*//' | sed 's/+pristine//' > DEBIANPACKAGE_VERSION
+          dpkg-parsechangelog -S Version | sed 's/+pristine//' > DEBIANPACKAGE_VERSION
           [ -s DEBIANPACKAGE_VERSION ] && echo "DEBIANPACKAGE_VERSION=$(cat DEBIANPACKAGE_VERSION)" >> $GITHUB_ENV
           
           echo "FILE_DATE=$(date +"%Y-%m-%d")" >> $GITHUB_ENV
