@@ -69,8 +69,6 @@ jobs:
       run: |
         cd r8125-dkms
         dpkg-buildpackage -b -rfakeroot -us -uc
-        cd ../../
-        du
         echo "::set-output name=status::success"
         
     - name: Lintian
@@ -86,9 +84,9 @@ jobs:
 
     - name: Generate release tag
       id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: steps.build.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }} \(${{ env.FILE_DATE }}\)"
+        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }} (${{ env.FILE_DATE }}\"
         touch release.txt >> release.txt
         echo " - Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
         echo " - Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
