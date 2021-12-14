@@ -1,11 +1,29 @@
-name: CI
-on: [push, pull_request]
+name: Build r8125 dkms
+on:
+  release:
+    types: published
+  push:
+    branches:
+      - master
+    paths:
+      - '.config'
+#  schedule:
+#    - cron: 0 8 * * 5
+  watch:
+    types: started
+    
 env:
+  REPO_URL: https://github.com/awesometic/realtek-r8125-dkms
+  REPO_BRANCH: master
   BUILD_NUMBER: ${{ github.run_number }}
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  
 jobs:
-  ubuntu:
+  build:
     name: Build on Ubuntu
     runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
     env:
       DEBIAN_FRONTEND: noninteractive
       DEBFULLNAME: 'github-actions'
@@ -14,18 +32,80 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
     - name: Install dependencies
-      run: sudo apt-get update -qq && sudo apt-get install -y dh-make dpkg-dev devscripts fakeroot lintian
-    - name: Build
       run: |
-        VERSION=$(date '+%y.%m.0.0')
-        dh_make --createorig --addmissing --defaultless -y -p open-eid_${VERSION}
-        dch --distribution `lsb_release -cs` -b -v ${VERSION} 'Release'
+        sudo apt-get update -qq && sudo apt-get install -y dh-make dpkg-dev devscripts fakeroot lintian
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+      
+    - name: Clone source code
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH r8125-dkms
+        
+    - name: Execute modifed shell
+      run: |
+        cd r8125-dkms
+        sed -i 's/ENABLE_MULTIPLE_TX_QUEUE = n/ENABLE_MULTIPLE_TX_QUEUE = y/g' src/Makefile
+        sed -i 's/ENABLE_RSS_SUPPORT = n/ENABLE_RSS_SUPPORT = y/g' src/Makefile
+        sed -i 's/CONFIG_ASPM = y/CONFIG_ASPM = n/g' src/Makefile
+    
+    - name: Init Version Info
+      run: |
+          grep '^PACKAGE_VERSION=.*' dkms.conf  | sed -r 's/^PACKAGE_VERSION="(.*)"/\1/'  > PACKAGE_VERSION
+          [ -s PACKAGE_VERSION ] && echo "PACKAGE_VERSION=_$(cat PACKAGE_VERSION)" >> $GITHUB_ENV
+          
+          grep '^PACKAGE_NAME=.*' dkms.conf  | sed -r 's/^PACKAGE_NAME="(.*)"/\1/'  > PACKAGE_NAME
+          [ -s PACKAGE_NAME ] && echo "PACKAGE_NAME=_$(cat PACKAGE_NAME)" >> $GITHUB_ENV
+          
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          
+    - name: Build deb package
+      id: build
+      run: |
+        cd r8125-dkms
+        #VERSION=$(date '+%y.%m.0.0')
+        #dh_make --createorig --addmissing --defaultless -y -p ${{ env.PACKAGE_NAME }}-dkms_${{ env.PACKAGE_VERSION }}
+        #dch --distribution `lsb_release -cs` -b -v ${VERSION} 'Release'
         dpkg-buildpackage -rfakeroot -us -uc
-        mv ../open-eid* .
+        du
+        echo "::set-output name=status::success"
+        
     - name: Lintian
       run: lintian *.deb
-    - name: Archive artifacts
-      uses: actions/upload-artifact@v2
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.build.outputs.status == 'success' && !cancelled()
       with:
-        name: deb
+        name: ${{ env.PACKAGE_NAME }}-dkms_${{ env.PACKAGE_VERSION }}_amd64.deb
         path: ./*.deb
+
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "::set-output name=release_tag::Realtek r8125 DKMS ${{ env.PACKAGE_VERSION }}"
+        touch release.txt >> release.txt
+        echo "Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
+        echo "Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
+        echo "\n更改功能：\n1、关闭ASPM，改善端口断开情况；\n2、开启网卡RSS功能，RX支持4个队列；\n3、开启TX多队列功能，TX支持2个队列。 ">> release.txt
+        
+        echo "::set-output name=status::success"
+        
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
