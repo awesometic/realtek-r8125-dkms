@@ -83,11 +83,15 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }}"
+        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }}($(date +"%Y-%m-%d"))"
         touch release.txt >> release.txt
-        echo "Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
-        echo "Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
-        echo "\n更改功能：\n1、关闭ASPM，改善端口断开情况；\n2、开启网卡RSS功能，RX支持4个队列；\n3、开启TX多队列功能，TX支持2个队列。 ">> release.txt
+        echo " - Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
+        echo " - Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
+        echo "    " >> release.txt
+        echo "- **更改功能：**>> release.txt
+        echo "1、关闭ASPM，改善端口断开情况；">> release.txt
+        echo "2、开启网卡RSS功能，RX支持4个队列；">> release.txt
+        echo "3、开启TX多队列功能，TX支持2个队列。 ">> release.txt
         
         echo "::set-output name=status::success"
         
