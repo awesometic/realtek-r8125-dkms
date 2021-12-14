@@ -78,7 +78,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.build.outputs.status == 'success' && !cancelled()
       with:
-        name: ${{ env.PACKAGE_NAME }}-dkms_${{ env.PACKAGE_VERSION }}_amd64.deb
+        name: ${{ env.PACKAGE_NAME }}-dkms_${{ env.DEBIANPACKAGE_VERSION }}_amd64.deb
         path: ./*.deb
 
 
@@ -86,9 +86,9 @@ jobs:
       id: tag
       if: steps.build.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }} (${{ env.FILE_DATE }}) "
+        echo "::set-output name=release_tag::${{ env.DEBIANPACKAGE_VERSION }} - ${{ env.FILE_DATE }} "
         touch release.txt >> release.txt
-        echo " - Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
+        echo " - Debian package version: ${{ env.DEBIANPACKAGE_VERSION }}" >> release.txt
         echo " - Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
         echo "    " >> release.txt
         echo "- **更改功能：**" >> release.txt
