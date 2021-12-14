@@ -1,0 +1,31 @@
+name: CI
+on: [push, pull_request]
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+jobs:
+  ubuntu:
+    name: Build on Ubuntu
+    runs-on: ubuntu-latest
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      DEBFULLNAME: 'github-actions'
+      DEBEMAIL: 'github-actions@github.com'
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt-get update -qq && sudo apt-get install -y dh-make dpkg-dev devscripts fakeroot lintian
+    - name: Build
+      run: |
+        VERSION=$(date '+%y.%m.0.0')
+        dh_make --createorig --addmissing --defaultless -y -p open-eid_${VERSION}
+        dch --distribution `lsb_release -cs` -b -v ${VERSION} 'Release'
+        dpkg-buildpackage -rfakeroot -us -uc
+        mv ../open-eid* .
+    - name: Lintian
+      run: lintian *.deb
+    - name: Archive artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: deb
+        path: ./*.deb
