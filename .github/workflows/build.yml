@@ -65,6 +65,7 @@ jobs:
       run: |
         cd r8125-dkms
         dpkg-buildpackage -b -rfakeroot -us -uc
+        cd ..
         du
         echo "::set-output name=status::success"
         
