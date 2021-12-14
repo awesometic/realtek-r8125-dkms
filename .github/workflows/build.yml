@@ -86,7 +86,7 @@ jobs:
       id: tag
       if: steps.build.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "::set-output name=release_tag::${{ env.DEBIANPACKAGE_VERSION }} - ${{ env.FILE_DATE }} "
+        echo "::set-output name=release_tag::${{ env.DEBIANPACKAGE_VERSION }}"
         touch release.txt >> release.txt
         echo " - Debian package version: ${{ env.DEBIANPACKAGE_VERSION }}" >> release.txt
         echo " - Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
@@ -104,6 +104,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
+        name: "Realtek r8125 DKMS ${{ env.DEBIANPACKAGE_VERSION }} (${{ env.FILE_DATE }})"
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
         files: ./*.deb
