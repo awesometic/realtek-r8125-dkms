@@ -58,16 +58,13 @@ jobs:
           grep '^PACKAGE_NAME=.*' dkms.conf  | sed -r 's/^PACKAGE_NAME="(.*)"/\1/'  > PACKAGE_NAME
           [ -s PACKAGE_NAME ] && echo "PACKAGE_NAME=$(cat PACKAGE_NAME)" >> $GITHUB_ENV
           
-          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           
     - name: Build deb package
       id: build
       run: |
         cd r8125-dkms
-        #VERSION=$(date '+%y.%m.0.0')
-        #dh_make --createorig --addmissing --defaultless -y -p ${{ env.PACKAGE_NAME }}-dkms_${{ env.PACKAGE_VERSION }}
-        #dch --distribution `lsb_release -cs` -b -v ${VERSION} 'Release'
-        dpkg-buildpackage -rfakeroot -us -uc
+        dpkg-buildpackage -b -rfakeroot -us -uc
         du
         echo "::set-output name=status::success"
         
@@ -86,7 +83,7 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "::set-output name=release_tag::Realtek r8125 DKMS ${{ env.PACKAGE_VERSION }}"
+        echo "::set-output name=release_tag::${{ env.PACKAGE_VERSION }}"
         touch release.txt >> release.txt
         echo "Debian package version: ${{ env.PACKAGE_VERSION }}" >> release.txt
         echo "Realtek r8125 driver version: ${{ env.PACKAGE_VERSION }} ">> release.txt
@@ -102,7 +99,7 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: ./*.deb
 
     - name: Delete workflow runs
       uses: GitRML/delete-workflow-runs@main
