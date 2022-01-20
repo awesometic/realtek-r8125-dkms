@@ -1,3 +1,10 @@
+realtek-r8125-dkms (9.007.01-2) stable; urgency=medium
+
+  * dkms.conf: Pass KVER value to make clean target
+  * dkms.conf: Correct the make target to avoid unnecessary copy
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Sun, 09 Jan 2022 13:00:22 +0900
+
 realtek-r8125-dkms (9.007.01-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.007.01
