@@ -41,7 +41,7 @@ sudo apt install --fix-broken
 Add the Launchpad PPA.
 
 ```bash
-sudo add-apt-repository ppa:hardkernel/ppa
+sudo add-apt-repository ppa:awesometic/ppa
 ```
 
 Then install the package using `apt` tool.
@@ -80,7 +80,7 @@ Check if the `r8169` module loaded currently.
 lsmod | grep -i r8169
 ```
 
-If there is a result, maybe the `r8125` module wasn't loaded properly. You can check it out using `dmesg` too.
+If there is a result, maybe the `r8125` module wasn't loaded properly. You can check out modules currently in use via `lspci -k` or `dmesg` too.
 
 To use the `r8125` module explicitly you can add the `r8169` module to not be loaded by adding it to a blacklist file.
 
@@ -93,7 +93,13 @@ blacklist r8169
 EOT
 ```
 
-Then reboot to take effect.
+To apply the new blacklist to your kernel, update your initramfs via 
+
+```bash
+sudo update-initramfs -u
+```
+
+Finally, reboot to take effect.
 
 > - If you need to load both r8169 and r8125, maybe removing r8125 firmware could make it work. Please enter `sudo rm -f /lib/firmware/rtl_nic/rtl8125*` to remove all the r8125 firmwares on the system. But it is just a workaround, you should have to do this every time installing the new kernel version or new Linux firmware.
 > - In the case of the Debian package, I will update the scripts to make it do this during the installation.
