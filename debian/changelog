@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.008.00-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.008.00
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Fri, 18 Mar 2022 13:03:33 +0100
+
 realtek-r8125-dkms (9.007.01-2) stable; urgency=medium
 
   * dkms.conf: Pass KVER value to make clean target
