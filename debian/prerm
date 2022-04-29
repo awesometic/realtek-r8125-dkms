@@ -1,7 +1,7 @@
 #!/bin/sh
 
 NAME=realtek-r8125
-VERSION=9.008.00
+VERSION=9.009.00
 
 set -e
 
