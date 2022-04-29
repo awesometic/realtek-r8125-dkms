@@ -112,22 +112,15 @@
 		b. Make sure that ethtool exists in /sbin.
 		c. Force the link status as the following command.
 
-			# ethtool -s ethX speed SPEED_MODE duplex DUPLEX_MODE autoneg NWAY_OPTION
+			2.5G before kernel v4.10
+			# ethtool -s eth0 autoneg on advertise 0x802f
 
-			,where
-				SPEED_MODE	= 1000	for 1000Mbps
-						= 100	for 100Mbps
-						= 10	for 10Mbps
-				DUPLEX_MODE	= half	for half-duplex
-						= full	for full-duplex
-				NWAY_OPTION	= off	for auto-negotiation off (true force)
-						= on	for auto-negotiation on (nway force)
+			2.5G for kernel v4.10 and later
+			# ethtool -s eth0 autoneg on advertise 0x80000000002f
 
-		For example:
-
-			# ethtool -s eth0 speed 100 duplex full autoneg on
-
-		will force PHY to operate in 100Mpbs Full-duplex(nway force).
+			# ethtool -s eth0 autoneg on advertise 0x002f (1G)
+			# ethtool -s eth0 autoneg on advertise 0x000f (100M full)
+			# ethtool -s eth0 autoneg on advertise 0x0003 (10M full)
 
 <Jumbo Frame>
 	Transmitting Jumbo Frames, whose packet size is bigger than 1500 bytes, please change mtu by the following command.
@@ -137,3 +130,14 @@
 	, where X=0,1,2,..., and MTU is configured by user.
 
 	RTL8125 supports Jumbo Frame size up to 9 kBytes.
+
+<EEE>
+    Get/Set device EEE status
+
+		Get EEE device status
+		# ethtool --show-eee enp1s0
+
+		Set EEE device status
+		# ethtool --set-eee enp1s0 eee on tx-lpi on tx-timer 1546 advertise 0x0008 (100M full)
+		# ethtool --set-eee enp1s0 eee on tx-lpi on tx-timer 1546 advertise 0x0020 (1G)
+		# ethtool --set-eee enp1s0 eee on tx-lpi on tx-timer 1546 advertise 0x8000 (2.5G)

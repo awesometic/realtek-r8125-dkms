@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.009.00-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.009.00
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Fri, 29 Apr 2022 09:38:17 +0800
+
 realtek-r8125-dkms (9.008.00-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.008.00
