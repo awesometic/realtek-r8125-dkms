@@ -12041,6 +12041,9 @@ rtl8125_esd_checker(struct rtl8125_private *tp)
         u32 pci_sn_l;
         u32 pci_sn_h;
 
+        if (unlikely(tp->rtk_enable_diag))
+                goto exit;
+
         tp->esd_flag = 0;
 
         pci_read_config_byte(pdev, PCI_COMMAND, &cmd);
