@@ -4,6 +4,14 @@
 
 This provides Realtek r8125 driver in DKMS way so that you can keep the latest driver even after the kernel upgrade.
 
+## Before use
+
+This DKMS package is for Realtek RTL8125 (r8125 in module name) Ethernet, which is designed for the PCI interface.
+
+If you are searching for the Realtek 2.5 Gbits **USB Ethernet**, which may use RTL8156 (r8152 in module name), you are in the wrong place. Please refer to another DKMS project for that Realtek driver.
+
+- [Realtek R8152 DKMS](https://github.com/awesometic/realtek-r8152-dkms)
+
 ## Installation
 
 There are 3 ways to install this DKMS module. Choose one as your tastes.
