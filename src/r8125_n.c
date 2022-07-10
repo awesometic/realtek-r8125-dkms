@@ -11952,11 +11952,11 @@ rtl8125_init_board(struct pci_dev *pdev,
 
         if ((sizeof(dma_addr_t) > 4) &&
             use_dac &&
-            !pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) &&
-            !pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64))) {
+            !dma_set_mask(&pdev->dev, DMA_BIT_MASK(64)) &&
+            !dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(64))) {
                 dev->features |= NETIF_F_HIGHDMA;
         } else {
-                rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+                rc = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
                 if (rc < 0) {
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
                         if (netif_msg_probe(tp))
@@ -12715,6 +12715,10 @@ rtl8125_init_one(struct pci_dev *pdev,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
                 dev->hw_features |= NETIF_F_IPV6_CSUM | NETIF_F_TSO6;
                 dev->features |=  NETIF_F_IPV6_CSUM;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
+                netif_set_tso_max_size(dev, LSO_64K);
+                netif_set_tso_max_segs(dev, NIC_MAX_PHYS_BUF_COUNT_LSO2);
+#else //LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
                 netif_set_gso_max_size(dev, LSO_64K);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0)
                 dev->gso_max_segs = NIC_MAX_PHYS_BUF_COUNT_LSO2;
@@ -12722,6 +12726,7 @@ rtl8125_init_one(struct pci_dev *pdev,
                 dev->gso_min_segs = NIC_MIN_PHYS_BUF_COUNT;
 #endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)
 #endif //LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0)
+#endif //LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
 
 #endif //LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 #endif //LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
@@ -14075,7 +14080,7 @@ static void rtl8125_cancel_schedule_esd_work(struct rtl8125_private *tp)
 static void rtl8125_schedule_linkchg_work(struct rtl8125_private *tp)
 {
         set_bit(R8125_FLAG_TASK_LINKCHG_CHECK_PENDING, tp->task_flags);
-        schedule_delayed_work(&tp->linkchg_task, RTL8125_ESD_TIMEOUT);
+        schedule_delayed_work(&tp->linkchg_task, 4);
 }
 
 static void rtl8125_cancel_schedule_linkchg_work(struct rtl8125_private *tp)
