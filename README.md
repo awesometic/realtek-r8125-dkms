@@ -35,7 +35,7 @@ sudo dpkg -i realtek-r8125-dkms*.deb
 > If multiple files selected by the wild card, you should type the specific version of the file.
 >
 > ```bash
-> sudo dpkg -i realtek-r8125-dkms_9.009.01-1_amd64.deb
+> sudo dpkg -i realtek-r8125-dkms_9.009.02-1_amd64.deb
 > ```
 
 If dependency error occurs, try to fix that with `apt` command.
