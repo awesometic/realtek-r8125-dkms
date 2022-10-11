@@ -19,6 +19,9 @@ override_dh_fixperms:
 	dh_fixperms
 	find debian/realtek-r8125-dkms/usr/src -type f -exec chmod -x {} \;
 
+override_dh_builddeb:
+	dh_builddeb -- -Zxz
+
 # Nothing to configure, build or auto-install
 override_dh_auto_configure:
 override_dh_auto_build:
