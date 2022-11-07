@@ -1,3 +1,10 @@
+realtek-r8125-dkms (9.010.01-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.010.01
+  * Use tar.xz compression when building Debian package
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Mon, 07 Nov 2022 10:52:01 +0900
+
 realtek-r8125-dkms (9.009.02-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.009.02
