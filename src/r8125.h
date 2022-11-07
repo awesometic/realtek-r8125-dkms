@@ -206,7 +206,7 @@ do { \
 #define NETIF_F_RXFCS  0
 #endif
 
-#ifndef HAVE_FREE_NETDEV
+#if !defined(HAVE_FREE_NETDEV) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,1,0))
 #define free_netdev(x)  kfree(x)
 #endif
 
@@ -367,7 +367,7 @@ do { \
 #define RSS_SUFFIX ""
 #endif
 
-#define RTL8125_VERSION "9.009.02" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
+#define RTL8125_VERSION "9.010.01" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
 #define MODULENAME "r8125"
 #define PFX MODULENAME ": "
 
@@ -476,6 +476,11 @@ This is free software, and you are welcome to redistribute it under certain cond
 #define R8125_MAX_QUEUES R8125_MAX_RX_QUEUES
 
 #define OCP_STD_PHY_BASE	0xa400
+
+//Channel Wait Count
+#define R8125_CHANNEL_WAIT_COUNT (20000)
+#define R8125_CHANNEL_WAIT_TIME (1)  // 1us
+#define R8125_CHANNEL_EXIT_DELAY_TIME (20)  //20us
 
 #ifdef ENABLE_LIB_SUPPORT
 #define R8125_MULTI_RX_Q(tp) 0
@@ -1760,6 +1765,7 @@ struct rtl8125_tx_ring {
         u32 num_tx_desc; /* Number of Tx descriptor registers */
         struct TxDesc *TxDescArray; /* 256-aligned Tx descriptor ring */
         dma_addr_t TxPhyAddr;
+        u32 TxDescAllocSize;
         struct ring_info tx_skb[MAX_NUM_TX_DESC]; /* Tx data buffers */
 
         u32 NextHwDesCloPtr;
@@ -1778,6 +1784,7 @@ struct rtl8125_rx_ring {
         u32 dirty_rx;
         u32 num_rx_desc; /* Number of Rx descriptor registers */
         struct RxDesc *RxDescArray; /* 256-aligned Rx descriptor ring */
+        u32 RxDescAllocSize;
         u64 RxDescPhyAddr[MAX_NUM_RX_DESC]; /* Rx desc physical address*/
         dma_addr_t RxPhyAddr;
         struct sk_buff *Rx_skbuff[MAX_NUM_RX_DESC]; /* Rx data buffers */
@@ -2515,6 +2522,8 @@ int rtl8125_init_ring(struct net_device *dev);
 void rtl8125_hw_set_rx_packet_filter(struct net_device *dev);
 void rtl8125_enable_hw_linkchg_interrupt(struct rtl8125_private *tp);
 int rtl8125_dump_tally_counter(struct rtl8125_private *tp, dma_addr_t paddr);
+void rtl8125_enable_napi(struct rtl8125_private *tp);
+void _rtl8125_wait_for_quiescence(struct net_device *dev);
 
 #ifndef ENABLE_LIB_SUPPORT
 static inline void rtl8125_lib_reset_prepare(struct rtl8125_private *tp) { }
