@@ -92,6 +92,7 @@
 
 #define FIRMWARE_8125A_3	"rtl_nic/rtl8125a-3.fw"
 #define FIRMWARE_8125B_2	"rtl_nic/rtl8125b-2.fw"
+#define FIRMWARE_8126A_1	"rtl_nic/rtl8126a-1.fw"
 
 /* Maximum number of multicast addresses to filter (vs. Rx-all-multicast).
    The RTL chips use a 64 element hash table based on the Ethernet CRC. */
@@ -108,6 +109,7 @@ static const struct {
         [CFG_METHOD_5] = {"RTL8125B",		FIRMWARE_8125B_2},
         [CFG_METHOD_6] = {"RTL8168KB",		FIRMWARE_8125A_3},
         [CFG_METHOD_7] = {"RTL8168KB",		FIRMWARE_8125B_2},
+        [CFG_METHOD_8] = {"RTL8126A",		FIRMWARE_8126A_1},
         [CFG_METHOD_DEFAULT] = {"Unknown",                  },
 };
 
@@ -157,6 +159,12 @@ static const struct {
         0xff7e5880,
         Jumbo_Frame_9k),
 
+        _R("RTL8126A",
+        CFG_METHOD_8,
+        BIT_30 | RxCfg_pause_slot_en | EnableInnerVlan | EnableOuterVlan | (RX_DMA_BURST << RxCfgDMAShift),
+        0xff7e5880,
+        Jumbo_Frame_9k),
+
         _R("Unknown",
         CFG_METHOD_DEFAULT,
         (RX_DMA_BURST << RxCfgDMAShift),
@@ -174,12 +182,13 @@ static struct pci_device_id rtl8125_pci_tbl[] = {
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8125), },
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8162), },
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x3000), },
+        { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8126), },
+        { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x5000), },
         {0,},
 };
 
 MODULE_DEVICE_TABLE(pci, rtl8125_pci_tbl);
 
-static int rx_copybreak = 0;
 static int use_dac = 1;
 static int timer_count = 0x2600;
 static int timer_count_v2 = (0x2600 / 0x100);
@@ -188,7 +197,7 @@ static struct {
         u32 msg_enable;
 } debug = { -1 };
 
-static unsigned int speed_mode = SPEED_2500;
+static unsigned int speed_mode = SPEED_5000;
 static unsigned int duplex_mode = DUPLEX_FULL;
 static unsigned int autoneg_mode = AUTONEG_ENABLE;
 static unsigned int advertising_mode =  ADVERTISED_10baseT_Half |
@@ -244,6 +253,12 @@ static int disable_pm_support = 1;
 static int disable_pm_support = 0;
 #endif
 
+#ifdef ENABLE_DOUBLE_VLAN
+static int enable_double_vlan = 1;
+#else
+static int enable_double_vlan = 0;
+#endif
+
 MODULE_AUTHOR("Realtek and the Linux r8125 crew <netdev@vger.kernel.org>");
 MODULE_DESCRIPTION("Realtek RTL8125 2.5Gigabit Ethernet driver");
 
@@ -268,9 +283,6 @@ MODULE_PARM_DESC(s5wol, "Enable Shutdown Wake On Lan.");
 module_param(s5_keep_curr_mac, int, 0);
 MODULE_PARM_DESC(s5_keep_curr_mac, "Enable Shutdown Keep Current MAC Address.");
 
-module_param(rx_copybreak, int, 0);
-MODULE_PARM_DESC(rx_copybreak, "Copy breakpoint for copy-only-tiny-frames");
-
 module_param(use_dac, int, 0);
 MODULE_PARM_DESC(use_dac, "Enable PCI DAC. Unsafe on 32 bit PCI slot.");
 
@@ -294,6 +306,9 @@ MODULE_PARM_DESC(enable_ptp_master_mode, "Enable PTP Master Mode.");
 
 module_param(disable_pm_support, int, 0);
 MODULE_PARM_DESC(disable_pm_support, "Disable PM support.");
+
+module_param(enable_double_vlan, int, 0);
+MODULE_PARM_DESC(enable_double_vlan, "Enable Double VLAN.");
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
 module_param_named(debug, debug.msg_enable, int, 0);
@@ -340,7 +355,6 @@ static void rtl8125_tx_timeout(struct net_device *dev, unsigned int txqueue);
 #else
 static void rtl8125_tx_timeout(struct net_device *dev);
 #endif
-static struct net_device_stats *rtl8125_get_stats(struct net_device *dev);
 static int rtl8125_rx_interrupt(struct net_device *, struct rtl8125_private *, struct rtl8125_rx_ring *, napi_budget);
 static int rtl8125_tx_interrupt(struct rtl8125_tx_ring *ring, int budget);
 static int rtl8125_tx_interrupt_with_vector(struct rtl8125_private *tp, const int message_id, int budget);
@@ -358,7 +372,7 @@ static u32 mdio_direct_read_phy_ocp(struct rtl8125_private *tp, u16 RegAddr);
 static u16 rtl8125_get_hw_phy_mcu_code_ver(struct rtl8125_private *tp);
 static void rtl8125_phy_power_up(struct net_device *dev);
 static void rtl8125_phy_power_down(struct net_device *dev);
-static int rtl8125_set_speed(struct net_device *dev, u8 autoneg, u32 speed, u8 duplex, u32 adv);
+static int rtl8125_set_speed(struct net_device *dev, u8 autoneg, u32 speed, u8 duplex, u64 adv);
 static bool rtl8125_set_phy_mcu_patch_request(struct rtl8125_private *tp);
 static bool rtl8125_clear_phy_mcu_patch_request(struct rtl8125_private *tp);
 
@@ -515,7 +529,7 @@ static inline void eth_copy_and_sum (struct sk_buff *dest,
                                      const unsigned char *src,
                                      int len, int base)
 {
-        memcpy (dest->data, src, len);
+        skb_copy_to_linear_data(dest, src, len);
 }
 #endif //LINUX_VERSION_CODE > KERNEL_VERSION(2,6,22)
 
@@ -700,6 +714,158 @@ int rtl8125_dump_tally_counter(struct rtl8125_private *tp, dma_addr_t paddr)
         return retval;
 }
 
+static u32 rtl8125_convert_link_speed(u16 status)
+{
+        u32 speed = SPEED_UNKNOWN;
+
+        if (status & LinkStatus) {
+                if (status & _5000bpsF)
+                        speed = SPEED_5000;
+                else if (status & _2500bpsF)
+                        speed = SPEED_2500;
+                else if (status & _1000bpsF)
+                        speed = SPEED_1000;
+                else if (status & _100bps)
+                        speed = SPEED_100;
+                else if (status & _10bps)
+                        speed = SPEED_10;
+        }
+
+        return speed;
+}
+
+static void rtl8125_get_cp_len(struct rtl8125_private *tp,
+                               u16 cp_len[RTL8125_CP_NUM])
+{
+        int i;
+        int count;
+        u16 status;
+        u16 tmp_cp_len = 0;
+
+        status = RTL_R16(tp, PHYstatus);
+        if (status & LinkStatus) {
+                if (status & _10bps) {
+                        tmp_cp_len = 0;
+                        goto no_cpdr;
+                } else if (status & _1000bpsF) {
+                        rtl8125_mdio_write(tp, 0x1f, 0x0a88);
+                        tmp_cp_len = rtl8125_mdio_read(tp, 0x10);
+                        goto no_cpdr;
+                } else if (status & _2500bpsF) {
+                        switch (tp->mcfg) {
+                        case CFG_METHOD_2:
+                        case CFG_METHOD_3:
+                        case CFG_METHOD_6:
+                                rtl8125_mdio_write(tp, 0x1f, 0x0ac5);
+                                tmp_cp_len = rtl8125_mdio_read(tp, 0x14) >> 4;
+                                break;
+                        default:
+                                rtl8125_mdio_write(tp, 0x1f, 0x0acb);
+                                tmp_cp_len = rtl8125_mdio_read(tp, 0x15) >> 2;
+                                break;
+                        }
+                        goto no_cpdr;
+                }
+        }
+
+        rtl8125_mdio_write(tp, 0x1f, 0x0a42);
+        rtl8125_mdio_write(tp, 0x11, 0x0000);
+        rtl8125_set_eth_phy_bit(tp, 0x11, 0xf0);
+        rtl8125_set_eth_phy_bit(tp, 0x11, 0x01);
+
+        count = 0;
+        while (!(rtl8125_mdio_read(tp, 0x11) & BIT_15) &&
+               (count++ < 200))
+                msleep(100);
+
+        rtl8125_mdio_write(tp, 0x1f, 0x0a43);
+        for (i=0; i<RTL8125_CP_NUM; i++) {
+                u16 val;
+                rtl8125_mdio_write(tp, 0x13, 0x8029 + 4 * i);
+                val = rtl8125_mdio_read(tp, 0x14);
+                tmp_cp_len = ((val & 0x3fff) / 80) & 0xff;
+                if (tmp_cp_len > 200)
+                        tmp_cp_len = 0;
+                cp_len[i] = tmp_cp_len;
+        }
+
+        goto exit;
+
+no_cpdr:
+        tmp_cp_len &= 0xff;
+        for (i=0; i<RTL8125_CP_NUM; i++)
+                cp_len[i] = tmp_cp_len;
+
+exit:
+        rtl8125_mdio_write(tp, 0x1f, 0x0000);
+
+        for (i=0; i<RTL8125_CP_NUM; i++)
+                if (cp_len[i] > RTL8125_MAX_SUPPORT_cp_len)
+                        cp_len[i] = RTL8125_MAX_SUPPORT_cp_len;
+
+        return;
+}
+
+static int _rtl8125_get_cp_status(u16 val)
+{
+        switch (val) {
+        case 0x0060:
+                return rtl8125_cp_normal;
+        case 0x0042:
+        case 0x0048:
+                return rtl8125_cp_open;
+        case 0x0044:
+        case 0x0050:
+                return rtl8125_cp_short;
+        default:
+                return rtl8125_cp_normal;
+        }
+}
+
+static int rtl8125_get_cp_status(struct rtl8125_private *tp, u8 pair_num)
+{
+        u16 val;
+        int cp_status = rtl8125_cp_unknown;
+
+        if (pair_num > 3)
+                goto exit;
+
+        rtl8125_mdio_write(tp, 0x1f, 0x0a43);
+        rtl8125_mdio_write(tp, 0x13, 0x8027 + 4 * pair_num);
+        val = rtl8125_mdio_read(tp, 0x14);
+        rtl8125_mdio_write(tp, 0x1f, 0x0000);
+
+        cp_status = _rtl8125_get_cp_status(val);
+
+exit:
+        return cp_status;
+}
+
+static const char * rtl8125_get_cp_status_string(int cp_status)
+{
+        switch(cp_status) {
+        case rtl8125_cp_normal:
+                return "normal";
+        case rtl8125_cp_short:
+                return "short";
+        case rtl8125_cp_open:
+                return "open";
+        default:
+                return "unknown";
+        }
+}
+
+static void rtl8125_get_cp(struct rtl8125_private *tp,
+                           u16 cp_len[RTL8125_CP_NUM],
+                           int cp_status[RTL8125_CP_NUM])
+{
+        int i;
+
+        rtl8125_get_cp_len(tp, cp_len);
+        for (i =0; i<RTL8125_CP_NUM; i++)
+                cp_status[i] = rtl8125_get_cp_status(tp, i);
+}
+
 #ifdef ENABLE_R8125_PROCFS
 /****************************************************************************
 *   -----------------------------PROCFS STUFF-------------------------
@@ -741,6 +907,11 @@ static int proc_get_driver_variable(struct seq_file *m, void *v)
         seq_printf(m, "cur_tx1\t0x%x\n", tp->tx_ring[1].cur_tx);
         seq_printf(m, "dirty_tx1\t0x%x\n", tp->tx_ring[1].dirty_tx);
         seq_printf(m, "rx_buf_sz\t0x%x\n", tp->rx_buf_sz);
+#ifdef ENABLE_PAGE_REUSE
+        seq_printf(m, "rx_buf_page_order\t0x%x\n", tp->rx_buf_page_order);
+        seq_printf(m, "rx_buf_page_size\t0x%x\n", tp->rx_buf_page_size);
+        seq_printf(m, "page_reuse_fail_cnt\t0x%x\n", tp->page_reuse_fail_cnt);
+#endif //ENABLE_PAGE_REUSE
         seq_printf(m, "esd_flag\t0x%x\n", tp->esd_flag);
         seq_printf(m, "pci_cfg_is_read\t0x%x\n", tp->pci_cfg_is_read);
         seq_printf(m, "rtl8125_rx_config\t0x%x\n", tp->rtl8125_rx_config);
@@ -754,7 +925,7 @@ static int proc_get_driver_variable(struct seq_file *m, void *v)
         seq_printf(m, "autoneg\t0x%x\n", tp->autoneg);
         seq_printf(m, "duplex\t0x%x\n", tp->duplex);
         seq_printf(m, "speed\t%d\n", tp->speed);
-        seq_printf(m, "advertising\t0x%x\n", tp->advertising);
+        seq_printf(m, "advertising\t0x%llx\n", tp->advertising);
         seq_printf(m, "eeprom_len\t0x%x\n", tp->eeprom_len);
         seq_printf(m, "cur_page\t0x%x\n", tp->cur_page);
         seq_printf(m, "bios_setting\t0x%x\n", tp->bios_setting);
@@ -800,6 +971,8 @@ static int proc_get_driver_variable(struct seq_file *m, void *v)
         seq_printf(m, "hwoptimize\t0x%lx\n", hwoptimize);
         seq_printf(m, "proc_init_num\t0x%x\n", proc_init_num);
         seq_printf(m, "s0_magic_packet\t0x%x\n", s0_magic_packet);
+        seq_printf(m, "disable_pm_support\t0x%x\n", disable_pm_support);
+        seq_printf(m, "enable_double_vlan\t0x%x\n", enable_double_vlan);
         seq_printf(m, "HwSuppMagicPktVer\t0x%x\n", tp->HwSuppMagicPktVer);
         seq_printf(m, "HwSuppLinkChgWakeUpVer\t0x%x\n", tp->HwSuppLinkChgWakeUpVer);
         seq_printf(m, "HwSuppD0SpeedUpVer\t0x%x\n", tp->HwSuppD0SpeedUpVer);
@@ -1071,8 +1244,7 @@ static int proc_get_temperature(struct seq_file *m, void *v)
                 seq_puts(m, "\nChip Temperature\n");
                 break;
         default:
-                seq_puts(m, "\nThis Chip Does Not Support Dump Temperature\n");
-                break;
+                return -EOPNOTSUPP;
         }
 
         rtnl_lock();
@@ -1091,6 +1263,46 @@ static int proc_get_temperature(struct seq_file *m, void *v)
                 fah = tj * (9/5) + 32;
                 seq_printf(m, "Fah:-%d\n", fah);
         }
+
+        seq_putc(m, '\n');
+        return 0;
+}
+
+static int proc_get_cable_info(struct seq_file *m, void *v)
+{
+        int i;
+        u16 status;
+        int cp_status[RTL8125_CP_NUM];
+        u16 cp_len[RTL8125_CP_NUM] = {0};
+        struct net_device *dev = m->private;
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        switch (tp->mcfg) {
+        case CFG_METHOD_2 ... CFG_METHOD_7:
+                /* support */
+                break;
+        default:
+                return -EOPNOTSUPP;
+        }
+
+        rtnl_lock();
+
+        status = RTL_R16(tp, PHYstatus);
+        if (status & LinkStatus)
+                seq_printf(m, "\nlink speed:%d",
+                           rtl8125_convert_link_speed(status));
+        else
+                seq_puts(m, "\nlink status:off");
+
+        rtl8125_get_cp(tp, cp_len, cp_status);
+
+        rtnl_unlock();
+
+        seq_puts(m, "\npair\tlength\tstaus\n");
+
+        for (i =0; i<RTL8125_CP_NUM; i++)
+                seq_printf(m, "%d-%d\t%d\t%s\n", i+1, i+2, cp_len[i],
+                           rtl8125_get_cp_status_string(cp_status[i]));
 
         seq_putc(m, '\n');
         return 0;
@@ -1135,6 +1347,11 @@ static int proc_get_driver_variable(char *page, char **start,
                         "cur_tx1\t0x%x\n"
                         "dirty_tx1\t0x%x\n"
                         "rx_buf_sz\t0x%x\n"
+#ifdef ENABLE_PAGE_REUSE
+                        "rx_buf_page_order\t0x%x\n"
+                        "rx_buf_page_size\t0x%x\n"
+                        "page_reuse_fail_cnt\t0x%x\n"
+#endif //ENABLE_PAGE_REUSE
                         "esd_flag\t0x%x\n"
                         "pci_cfg_is_read\t0x%x\n"
                         "rtl8125_rx_config\t0x%x\n"
@@ -1148,7 +1365,7 @@ static int proc_get_driver_variable(char *page, char **start,
                         "autoneg\t0x%x\n"
                         "duplex\t0x%x\n"
                         "speed\t%d\n"
-                        "advertising\t0x%x\n"
+                        "advertising\t0x%llx\n"
                         "eeprom_len\t0x%x\n"
                         "cur_page\t0x%x\n"
                         "bios_setting\t0x%x\n"
@@ -1194,6 +1411,8 @@ static int proc_get_driver_variable(char *page, char **start,
                         "hwoptimize\t0x%lx\n"
                         "proc_init_num\t0x%x\n"
                         "s0_magic_packet\t0x%x\n"
+                        "disable_pm_support\t0x%x\n"
+                        "enable_double_vlan\t0x%x\n"
                         "HwSuppMagicPktVer\t0x%x\n"
                         "HwSuppLinkChgWakeUpVer\t0x%x\n"
                         "HwSuppD0SpeedUpVer\t0x%x\n"
@@ -1251,6 +1470,11 @@ static int proc_get_driver_variable(char *page, char **start,
                         tp->tx_ring[1].cur_tx,
                         tp->tx_ring[1].dirty_tx,
                         tp->rx_buf_sz,
+#ifdef ENABLE_PAGE_REUSE
+                        tp->rx_buf_page_order,
+                        tp->rx_buf_page_size,
+                        tp->page_reuse_fail_cnt,
+#endif //ENABLE_PAGE_REUSE
                         tp->esd_flag,
                         tp->pci_cfg_is_read,
                         tp->rtl8125_rx_config,
@@ -1310,6 +1534,8 @@ static int proc_get_driver_variable(char *page, char **start,
                         hwoptimize,
                         proc_init_num,
                         s0_magic_packet,
+                        disable_pm_support,
+                        enable_double_vlan,
                         tp->HwSuppMagicPktVer,
                         tp->HwSuppLinkChgWakeUpVer,
                         tp->HwSuppD0SpeedUpVer,
@@ -1694,9 +1920,7 @@ static int proc_get_temperature(char *page, char **start,
                                 "\nChip Temperature\n");
                 break;
         default:
-                len += snprintf(page + len, count - len,
-                                "\nThis Chip Does Not Support Dump Temperature\n");
-                break;
+                return -EOPNOTSUPP;
         }
 
         rtnl_lock();
@@ -1724,6 +1948,56 @@ static int proc_get_temperature(char *page, char **start,
                                 "Fah:-%d\n",
                                 fah);
         }
+
+        len += snprintf(page + len, count - len, "\n");
+
+        *eof = 1;
+        return len;
+}
+
+static int proc_get_cable_info(char *page, char **start,
+                               off_t offset, int count,
+                               int *eof, void *data)
+{
+        int i;
+        u16 status;
+        int len = 0;
+        struct net_device *dev = data;
+        int cp_status[RTL8125_CP_NUM] = {0};
+        u16 cp_len[RTL8125_CP_NUM] = {0};
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        switch (tp->mcfg) {
+        case CFG_METHOD_2 ... CFG_METHOD_7:
+                /* support */
+                break;
+        default:
+                return -EOPNOTSUPP;
+        }
+
+        rtnl_lock();
+
+        status = RTL_R16(tp, PHYstatus);
+        if (status & LinkStatus)
+                len += snprintf(page + len, count - len,
+                                "\nlink speed:%d",
+                                rtl8125_convert_link_speed(status));
+        else
+                len += snprintf(page + len, count - len,
+                                "\nlink status:off");
+
+        rtl8125_get_cp(tp, cp_len, cp_status);
+
+        rtnl_unlock();
+
+        len += snprintf(page + len, count - len,
+                        "\npair\tlength\tstaus\n");
+
+        for (i =0; i<RTL8125_CP_NUM; i++)
+                len += snprintf(page + len, count - len,
+                                "%d-%d\t%d\t%s\n",
+                                i+1, i+2, cp_len[i],
+                                rtl8125_get_cp_status_string(cp_status[i]));
 
         len += snprintf(page + len, count - len, "\n");
 
@@ -1798,6 +2072,7 @@ static const struct rtl8125_proc_file rtl8125_proc_files[] = {
         { "ext_regs", &proc_get_extended_registers },
         { "pci_regs", &proc_get_pci_registers },
         { "temp", &proc_get_temperature },
+        { "cdt", &proc_get_cable_info },
         { "", NULL }
 };
 
@@ -2274,15 +2549,13 @@ void rtl8125_oob_mutex_lock(struct rtl8125_private *tp)
         switch (tp->mcfg) {
         case CFG_METHOD_2:
         case CFG_METHOD_3:
-        case CFG_METHOD_4:
-        case CFG_METHOD_5:
         case CFG_METHOD_6:
-        case CFG_METHOD_7:
-        default:
                 ocp_reg_mutex_oob = 0x110;
                 ocp_reg_mutex_ib = 0x114;
                 ocp_reg_mutex_prio = 0x11C;
                 break;
+        default:
+                return;
         }
 
         rtl8125_ocp_write(tp, ocp_reg_mutex_ib, 1, BIT_0);
@@ -2325,15 +2598,13 @@ void rtl8125_oob_mutex_unlock(struct rtl8125_private *tp)
         switch (tp->mcfg) {
         case CFG_METHOD_2:
         case CFG_METHOD_3:
-        case CFG_METHOD_4:
-        case CFG_METHOD_5:
         case CFG_METHOD_6:
-        case CFG_METHOD_7:
-        default:
                 ocp_reg_mutex_oob = 0x110;
                 ocp_reg_mutex_ib = 0x114;
                 ocp_reg_mutex_prio = 0x11C;
                 break;
+        default:
+                return;
         }
 
         rtl8125_ocp_write(tp, ocp_reg_mutex_prio, 1, BIT_0);
@@ -2423,51 +2694,65 @@ static void rtl8125_dash2_disable_txrx(struct net_device *dev)
         }
 }
 
-static void rtl8125_driver_start(struct rtl8125_private *tp)
+static int rtl8125_wait_dash_fw_ready(struct rtl8125_private *tp)
 {
+        int rc = -1;
+        int timeout;
+
+        if (HW_DASH_SUPPORT_TYPE_2(tp) == FALSE &&
+            HW_DASH_SUPPORT_TYPE_3(tp) == FALSE)
+                goto out;
+
         if (!tp->DASH)
-                return;
+                goto out;
 
-        if (HW_DASH_SUPPORT_TYPE_2(tp) || HW_DASH_SUPPORT_TYPE_3(tp)) {
-                int timeout;
-                u32 tmp_value;
-
-                rtl8125_ocp_write(tp, 0x180, 1, OOB_CMD_DRIVER_START);
-                tmp_value = rtl8125_ocp_read(tp, 0x30, 1);
-                tmp_value |= BIT_0;
-                rtl8125_ocp_write(tp, 0x30, 1, tmp_value);
-
-                for (timeout = 0; timeout < 10; timeout++) {
-                        mdelay(10);
-                        if (rtl8125_ocp_read(tp, 0x124, 1) & BIT_0)
-                                break;
+        for (timeout = 0; timeout < 10; timeout++) {
+                mdelay(10);
+                if (rtl8125_ocp_read(tp, 0x124, 1) & BIT_0) {
+                        rc = 1;
+                        goto out;
                 }
         }
+
+        rc = 0;
+
+out:
+        return rc;
+}
+
+static void rtl8125_driver_start(struct rtl8125_private *tp)
+{
+        u32 tmp_value;
+
+        if (HW_DASH_SUPPORT_TYPE_2(tp) == FALSE &&
+            HW_DASH_SUPPORT_TYPE_3(tp) == FALSE)
+                return;
+
+        rtl8125_ocp_write(tp, 0x180, 1, OOB_CMD_DRIVER_START);
+        tmp_value = rtl8125_ocp_read(tp, 0x30, 1);
+        tmp_value |= BIT_0;
+        rtl8125_ocp_write(tp, 0x30, 1, tmp_value);
+
+        rtl8125_wait_dash_fw_ready(tp);
 }
 
 static void rtl8125_driver_stop(struct rtl8125_private *tp)
 {
-        if (!tp->DASH)
+        u32 tmp_value;
+        struct net_device *dev = tp->dev;
+
+        if (HW_DASH_SUPPORT_TYPE_2(tp) == FALSE &&
+            HW_DASH_SUPPORT_TYPE_3(tp) == FALSE)
                 return;
 
-        if (HW_DASH_SUPPORT_TYPE_2(tp) || HW_DASH_SUPPORT_TYPE_3(tp)) {
-                struct net_device *dev = tp->dev;
-                int timeout;
-                u32 tmp_value;
+        rtl8125_dash2_disable_txrx(dev);
 
-                rtl8125_dash2_disable_txrx(dev);
+        rtl8125_ocp_write(tp, 0x180, 1, OOB_CMD_DRIVER_STOP);
+        tmp_value = rtl8125_ocp_read(tp, 0x30, 1);
+        tmp_value |= BIT_0;
+        rtl8125_ocp_write(tp, 0x30, 1, tmp_value);
 
-                rtl8125_ocp_write(tp, 0x180, 1, OOB_CMD_DRIVER_STOP);
-                tmp_value = rtl8125_ocp_read(tp, 0x30, 1);
-                tmp_value |= BIT_0;
-                rtl8125_ocp_write(tp, 0x30, 1, tmp_value);
-
-                for (timeout = 0; timeout < 10; timeout++) {
-                        mdelay(10);
-                        if (!(rtl8125_ocp_read(tp, 0x124, 1) & BIT_0))
-                                break;
-                }
-        }
+        rtl8125_wait_dash_fw_ready(tp);
 }
 
 void rtl8125_ephy_write(struct rtl8125_private *tp, int RegAddr, int value)
@@ -2827,6 +3112,7 @@ rtl8125_enable_rxdvgate(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, 0xF2, RTL_R8(tp, 0xF2) | BIT_3);
                 mdelay(2);
                 break;
@@ -2845,6 +3131,7 @@ rtl8125_disable_rxdvgate(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, 0xF2, RTL_R8(tp, 0xF2) & ~BIT_3);
                 mdelay(2);
                 break;
@@ -2938,6 +3225,7 @@ rtl8125_wait_txrx_fifo_empty(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_stop_all_request(dev);
                 break;
         }
@@ -2949,6 +3237,7 @@ rtl8125_wait_txrx_fifo_empty(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 for (i = 0; i < 3000; i++) {
                         udelay(50);
                         if ((RTL_R8(tp, MCUCmd_reg) & (Txfifo_empty | Rxfifo_empty)) == (Txfifo_empty | Rxfifo_empty))
@@ -2961,6 +3250,7 @@ rtl8125_wait_txrx_fifo_empty(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 for (i = 0; i < 3000; i++) {
                         udelay(50);
                         if ((RTL_R16(tp, IntrMitigate) & (BIT_0 | BIT_1 | BIT_8)) == (BIT_0 | BIT_1 | BIT_8))
@@ -3183,6 +3473,7 @@ rtl8125_hw_clear_timer_int(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W32(tp, TIMER_INT0_8125, 0x0000);
                 RTL_W32(tp, TIMER_INT1_8125, 0x0000);
                 RTL_W32(tp, TIMER_INT2_8125, 0x0000);
@@ -3366,6 +3657,7 @@ rtl8125_issue_offset_99_event(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xE09A,  rtl8125_mac_ocp_read(tp, 0xE09A) | BIT_0);
                 break;
         }
@@ -3399,6 +3691,7 @@ static int rtl8125_enable_eee_plus(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xE080, rtl8125_mac_ocp_read(tp, 0xE080)|BIT_1);
                 break;
 
@@ -3423,9 +3716,9 @@ static int rtl8125_disable_eee_plus(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xE080, rtl8125_mac_ocp_read(tp, 0xE080)&~BIT_1);
                 break;
-
         default:
 //      dev_printk(KERN_DEBUG, tp_to_dev(tp), "Not Support EEEPlus\n");
                 ret = -EOPNOTSUPP;
@@ -3433,6 +3726,40 @@ static int rtl8125_disable_eee_plus(struct rtl8125_private *tp)
         }
 
         return ret;
+}
+
+static void rtl8125_enable_double_vlan(struct rtl8125_private *tp)
+{
+        switch (tp->mcfg) {
+        case CFG_METHOD_2:
+        case CFG_METHOD_3:
+        case CFG_METHOD_4:
+        case CFG_METHOD_5:
+        case CFG_METHOD_6:
+        case CFG_METHOD_7:
+        case CFG_METHOD_8:
+                RTL_W16(tp, DOUBLE_VLAN_CONFIG, 0xf002);
+                break;
+        default:
+                break;
+        }
+}
+
+static void rtl8125_disable_double_vlan(struct rtl8125_private *tp)
+{
+        switch (tp->mcfg) {
+        case CFG_METHOD_2:
+        case CFG_METHOD_3:
+        case CFG_METHOD_4:
+        case CFG_METHOD_5:
+        case CFG_METHOD_6:
+        case CFG_METHOD_7:
+        case CFG_METHOD_8:
+                RTL_W16(tp, DOUBLE_VLAN_CONFIG, 0);
+                break;
+        default:
+                break;
+        }
 }
 
 static void
@@ -3450,14 +3777,20 @@ rtl8125_link_on_patch(struct net_device *dev)
                         RTL_W32(tp, TxConfig, (RTL_R32(tp, TxConfig) | BIT_25) & ~(BIT_19 | BIT_24));
         }
 
-        if ((tp->mcfg == CFG_METHOD_2 ||
-             tp->mcfg == CFG_METHOD_3 ||
-             tp->mcfg == CFG_METHOD_4 ||
-             tp->mcfg == CFG_METHOD_5 ||
-             tp->mcfg == CFG_METHOD_6 ||
-             tp->mcfg == CFG_METHOD_7) &&
-            (RTL_R8(tp, PHYstatus) & _10bps))
-                rtl8125_enable_eee_plus(tp);
+        switch (tp->mcfg) {
+        case CFG_METHOD_2:
+        case CFG_METHOD_3:
+        case CFG_METHOD_4:
+        case CFG_METHOD_5:
+        case CFG_METHOD_6:
+        case CFG_METHOD_7:
+        case CFG_METHOD_8:
+                if (RTL_R8(tp, PHYstatus) & _10bps)
+                        rtl8125_enable_eee_plus(tp);
+                break;
+        default:
+                break;
+        }
 
         rtl8125_hw_start(dev);
 
@@ -3481,17 +3814,23 @@ rtl8125_link_down_patch(struct net_device *dev)
         tp->phy_reg_gbsr = 0;
         tp->phy_reg_status_2500 = 0;
 
-        if (tp->mcfg == CFG_METHOD_2 ||
-            tp->mcfg == CFG_METHOD_3 ||
-            tp->mcfg == CFG_METHOD_4 ||
-            tp->mcfg == CFG_METHOD_5 ||
-            tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7)
+        switch (tp->mcfg) {
+        case CFG_METHOD_2:
+        case CFG_METHOD_3:
+        case CFG_METHOD_4:
+        case CFG_METHOD_5:
+        case CFG_METHOD_6:
+        case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_disable_eee_plus(tp);
-
-        netif_tx_stop_all_queues(dev);
+                break;
+        default:
+                break;
+        }
 
         netif_carrier_off(dev);
+
+        netif_tx_disable(dev);
 
         rtl8125_hw_reset(dev);
 
@@ -3612,12 +3951,13 @@ rtl8125_enable_ocp_phy_power_saving(struct net_device *dev)
         struct rtl8125_private *tp = netdev_priv(dev);
         u16 val;
 
-         if (tp->mcfg == CFG_METHOD_2 ||
-             tp->mcfg == CFG_METHOD_3 ||
-             tp->mcfg == CFG_METHOD_4 ||
-			 tp->mcfg == CFG_METHOD_5 ||
-			 tp->mcfg == CFG_METHOD_6 ||
-			 tp->mcfg == CFG_METHOD_7) {
+        if (tp->mcfg == CFG_METHOD_2 ||
+            tp->mcfg == CFG_METHOD_3 ||
+            tp->mcfg == CFG_METHOD_4 ||
+            tp->mcfg == CFG_METHOD_5 ||
+            tp->mcfg == CFG_METHOD_6 ||
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 val = mdio_direct_read_phy_ocp(tp, 0xC416);
                 if (val != 0x0050) {
                         rtl8125_set_phy_mcu_patch_request(tp);
@@ -3640,7 +3980,8 @@ rtl8125_disable_ocp_phy_power_saving(struct net_device *dev)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7) {
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 val = mdio_direct_read_phy_ocp(tp, 0xC416);
                 if (val != 0x0500) {
                         rtl8125_set_phy_mcu_patch_request(tp);
@@ -3674,6 +4015,7 @@ rtl8125_disable_pci_offset_99(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xE032,  rtl8125_mac_ocp_read(tp, 0xE032) & ~(BIT_0 | BIT_1));
                 break;
         }
@@ -3685,6 +4027,7 @@ rtl8125_disable_pci_offset_99(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_csi_fun0_write_byte(tp, 0x99, 0x00);
                 break;
         }
@@ -3702,6 +4045,7 @@ rtl8125_enable_pci_offset_99(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_csi_fun0_write_byte(tp, 0x99, tp->org_pci_offset_99);
                 break;
         }
@@ -3713,6 +4057,7 @@ rtl8125_enable_pci_offset_99(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 csi_tmp = rtl8125_mac_ocp_read(tp, 0xE032);
                 csi_tmp &= ~(BIT_0 | BIT_1);
                 if (tp->org_pci_offset_99 & (BIT_5 | BIT_6))
@@ -3736,6 +4081,7 @@ rtl8125_init_pci_offset_99(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xCDD0, 0x9003);
                 csi_tmp = rtl8125_mac_ocp_read(tp, 0xE034);
                 csi_tmp |= (BIT_15 | BIT_14);
@@ -3776,6 +4122,7 @@ rtl8125_disable_pci_offset_180(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 csi_tmp = rtl8125_mac_ocp_read(tp, 0xE092);
                 csi_tmp &= 0xFF00;
                 rtl8125_mac_ocp_write(tp, 0xE092, csi_tmp);
@@ -3795,6 +4142,7 @@ rtl8125_enable_pci_offset_180(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 csi_tmp = rtl8125_mac_ocp_read(tp, 0xE094);
                 csi_tmp &= 0x00FF;
                 rtl8125_mac_ocp_write(tp, 0xE094, csi_tmp);
@@ -3808,6 +4156,7 @@ rtl8125_enable_pci_offset_180(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 csi_tmp = rtl8125_mac_ocp_read(tp, 0xE092);
                 csi_tmp &= 0xFF00;
                 csi_tmp |= BIT_2;
@@ -3834,6 +4183,7 @@ rtl8125_set_pci_99_180_exit_driver_para(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 if (tp->org_pci_offset_99 & BIT_2)
                         rtl8125_issue_offset_99_event(tp);
                 rtl8125_disable_pci_offset_99(tp);
@@ -3847,6 +4197,7 @@ rtl8125_set_pci_99_180_exit_driver_para(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_disable_pci_offset_180(tp);
                 break;
         }
@@ -3912,6 +4263,7 @@ rtl8125_hw_d3_para(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, 0xF1, RTL_R8(tp, 0xF1) & ~BIT_7);
                 rtl8125_enable_cfg9346_write(tp);
                 RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~BIT_7);
@@ -3933,6 +4285,7 @@ rtl8125_hw_d3_para(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xEA18, 0x0064);
                 break;
         }
@@ -3945,7 +4298,8 @@ rtl8125_hw_d3_para(struct net_device *dev)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7)
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8)
                 rtl8125_disable_ocp_phy_power_saving(dev);
 
         rtl8125_disable_rxdvgate(dev);
@@ -4301,7 +4655,8 @@ rtl8125_powerdown_pll(struct net_device *dev, u8 from_suspend)
                     tp->mcfg == CFG_METHOD_4 ||
                     tp->mcfg == CFG_METHOD_5 ||
                     tp->mcfg == CFG_METHOD_6 ||
-                    tp->mcfg == CFG_METHOD_7) {
+                    tp->mcfg == CFG_METHOD_7 ||
+                    tp->mcfg == CFG_METHOD_8) {
                         rtl8125_enable_cfg9346_write(tp);
                         RTL_W8(tp, Config2, RTL_R8(tp, Config2) | PMSTS_En);
                         rtl8125_disable_cfg9346_write(tp);
@@ -4340,6 +4695,7 @@ rtl8125_powerdown_pll(struct net_device *dev, u8 from_suspend)
                 case CFG_METHOD_5:
                 case CFG_METHOD_6:
                 case CFG_METHOD_7:
+                case CFG_METHOD_8:
                         RTL_W8(tp, PMCH, RTL_R8(tp, PMCH) & ~BIT_7);
                         break;
                 }
@@ -4352,6 +4708,7 @@ rtl8125_powerdown_pll(struct net_device *dev, u8 from_suspend)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, 0xF2, RTL_R8(tp, 0xF2) & ~BIT_6);
                 break;
         }
@@ -4368,6 +4725,7 @@ static void rtl8125_powerup_pll(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, PMCH, RTL_R8(tp, PMCH) | BIT_7 | BIT_6);
                 break;
         }
@@ -4463,7 +4821,7 @@ rtl8125_set_speed_xmii(struct net_device *dev,
                        u8 autoneg,
                        u32 speed,
                        u8 duplex,
-                       u32 adv)
+                       u64 adv)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
         int auto_nego = 0;
@@ -4475,7 +4833,8 @@ rtl8125_set_speed_xmii(struct net_device *dev,
         ClearEthPhyOcpBit(tp, 0xA428, BIT_9);
         ClearEthPhyOcpBit(tp, 0xA5EA, BIT_0);
 
-        if (speed != SPEED_2500 &&
+        if (speed != SPEED_5000 &&
+            speed != SPEED_2500 &&
             (speed != SPEED_1000) &&
             (speed != SPEED_100) &&
             (speed != SPEED_10)) {
@@ -4486,7 +4845,7 @@ rtl8125_set_speed_xmii(struct net_device *dev,
         giga_ctrl = rtl8125_mdio_read(tp, MII_CTRL1000);
         giga_ctrl &= ~(ADVERTISE_1000HALF | ADVERTISE_1000FULL);
         ctrl_2500 = mdio_direct_read_phy_ocp(tp, 0xA5D4);
-        ctrl_2500 &= ~(RTK_ADVERTISE_2500FULL);
+        ctrl_2500 &= ~(RTK_ADVERTISE_2500FULL | RTK_ADVERTISE_5000FULL);
 
         if (autoneg == AUTONEG_ENABLE) {
                 /*n-way force*/
@@ -4509,6 +4868,10 @@ rtl8125_set_speed_xmii(struct net_device *dev,
                         giga_ctrl |= ADVERTISE_1000FULL;
                 if (adv & ADVERTISED_2500baseX_Full)
                         ctrl_2500 |= RTK_ADVERTISE_2500FULL;
+                if (HW_SUPP_PHY_LINK_SPEED_5000M(tp)) {
+                        if (adv & RTK_ADVERTISED_5000baseX_Full)
+                                ctrl_2500 |= RTK_ADVERTISE_5000FULL;
+                }
 
                 //flow control
                 if (dev->mtu <= ETH_DATA_LEN && tp->fcpause == rtl8125_fc_full)
@@ -4550,7 +4913,7 @@ rtl8125_set_speed(struct net_device *dev,
                   u8 autoneg,
                   u32 speed,
                   u8 duplex,
-                  u32 adv)
+                  u64 adv)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
         int ret;
@@ -4576,7 +4939,7 @@ rtl8125_set_settings(struct net_device *dev,
         u8 autoneg;
         u32 speed;
         u8 duplex;
-        u32 supported, advertising;
+        u64 supported = 0, advertising = 0;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
         autoneg = cmd->autoneg;
@@ -4585,13 +4948,14 @@ rtl8125_set_settings(struct net_device *dev,
         supported = cmd->supported;
         advertising = cmd->advertising;
 #else
+        struct rtl8125_private *tp = netdev_priv(dev);
         const struct ethtool_link_settings *base = &cmd->base;
         autoneg = base->autoneg;
         speed = base->speed;
         duplex = base->duplex;
-        ethtool_convert_link_mode_to_legacy_u32(&supported,
+        ethtool_convert_link_mode_to_legacy_u32((u32*)&supported,
                                                 cmd->link_modes.supported);
-        ethtool_convert_link_mode_to_legacy_u32(&advertising,
+        ethtool_convert_link_mode_to_legacy_u32((u32*)&advertising,
                                                 cmd->link_modes.advertising);
         if (test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
                      cmd->link_modes.supported))
@@ -4599,6 +4963,14 @@ rtl8125_set_settings(struct net_device *dev,
         if (test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
                      cmd->link_modes.advertising))
                 advertising |= ADVERTISED_2500baseX_Full;
+        if (HW_SUPP_PHY_LINK_SPEED_5000M(tp)) {
+                if (test_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT,
+                             cmd->link_modes.supported))
+                        supported |= RTK_ADVERTISED_5000baseX_Full;
+                if (test_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT,
+                             cmd->link_modes.advertising))
+                        advertising |= RTK_ADVERTISED_5000baseX_Full;
+        }
 #endif
         if (advertising & ~supported)
                 return -EINVAL;
@@ -4744,7 +5116,8 @@ rtl8125_vlan_rx_register(struct net_device *dev,
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7) {
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 if (tp->vlgrp) {
                         tp->rtl8125_rx_config |= (EnableInnerVlan | EnableOuterVlan);
                         RTL_W32(tp, RxConfig, RTL_R32(tp, RxConfig) | (EnableInnerVlan | EnableOuterVlan))
@@ -4902,7 +5275,7 @@ static void rtl8125_gset_xmii(struct net_device *dev,
         u8 autoneg, duplex;
         u32 speed = 0;
         u16 bmcr;
-        u32 supported, advertising;
+        u64 supported, advertising;
         u8 report_lpa = 0;
 
         supported = SUPPORTED_10baseT_Half |
@@ -4916,7 +5289,7 @@ static void rtl8125_gset_xmii(struct net_device *dev,
                     SUPPORTED_Pause	|
                     SUPPORTED_Asym_Pause;
 
-        if (tp->mcfg == CFG_METHOD_6 || tp->mcfg == CFG_METHOD_7)
+        if (!HW_SUPP_PHY_LINK_SPEED_2500M(tp))
                 supported &= ~SUPPORTED_2500baseX_Full;
 
         advertising = ADVERTISED_TP;
@@ -4938,8 +5311,6 @@ static void rtl8125_gset_xmii(struct net_device *dev,
                         advertising |= ADVERTISED_100baseT_Full;
                 if (tp->phy_1000_ctrl_reg & ADVERTISE_1000FULL)
                         advertising |= ADVERTISED_1000baseT_Full;
-                if (tp->phy_2500_ctrl_reg & RTK_ADVERTISE_2500FULL)
-                        advertising |= ADVERTISED_2500baseX_Full;
         } else {
                 autoneg = AUTONEG_DISABLE;
         }
@@ -4950,14 +5321,7 @@ static void rtl8125_gset_xmii(struct net_device *dev,
 
         if (report_lpa) {
                 /*link on*/
-                if (status & _2500bpsF)
-                        speed = SPEED_2500;
-                else if (status & _1000bpsF)
-                        speed = SPEED_1000;
-                else if (status & _100bps)
-                        speed = SPEED_100;
-                else if (status & _10bps)
-                        speed = SPEED_10;
+                speed = rtl8125_convert_link_speed(status);
 
                 if (status & TxFlowCtrl)
                         advertising |= ADVERTISED_Asym_Pause;
@@ -4965,7 +5329,8 @@ static void rtl8125_gset_xmii(struct net_device *dev,
                 if (status & RxFlowCtrl)
                         advertising |= ADVERTISED_Pause;
 
-                duplex = ((status & (_1000bpsF | _2500bpsF)) || (status & FullDup)) ?
+                duplex = ((status & (_1000bpsF | _2500bpsF | _5000bpsF)) ||
+                          (status & FullDup)) ?
                          DUPLEX_FULL : DUPLEX_HALF;
 
                 /*link partner*/
@@ -4997,8 +5362,8 @@ static void rtl8125_gset_xmii(struct net_device *dev,
         }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
-        cmd->supported = supported;
-        cmd->advertising = advertising;
+        cmd->supported = (u32)supported;
+        cmd->advertising = (u32)advertising;
         cmd->autoneg = autoneg;
         cmd->speed = speed;
         cmd->duplex = duplex;
@@ -5023,6 +5388,12 @@ static void rtl8125_gset_xmii(struct net_device *dev,
                                  cmd->link_modes.advertising, 0);
                 linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
                                  cmd->link_modes.advertising, 1);
+        }
+        if (HW_SUPP_PHY_LINK_SPEED_5000M(tp)) {
+                linkmode_mod_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT,
+                                 cmd->link_modes.supported, 1);
+                linkmode_mod_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT,
+                                 cmd->link_modes.advertising, tp->phy_2500_ctrl_reg & RTK_ADVERTISE_5000FULL);
         }
         if (report_lpa) {
                 if (lpa_adv & ADVERTISED_2500baseX_Full) {
@@ -5100,6 +5471,7 @@ static void rtl8125_get_regs(struct net_device *dev, struct ethtool_regs *regs,
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
         default:
                 for (i = 0; i < R8125_ERI_REGS_SIZE; i+=4) {
                         *(u32*)data = rtl8125_eri_read(tp, i , 4, ERIAR_ExGMAC);
@@ -5254,7 +5626,7 @@ static void rtl8125_get_ringparam(struct net_device *dev,
         struct rtl8125_private *tp = netdev_priv(dev);
 
         ring->rx_max_pending = MAX_NUM_TX_DESC;
-        ring->tx_max_pending = MAX_NUM_RX_DESC;;
+        ring->tx_max_pending = MAX_NUM_RX_DESC;
         ring->rx_pending = tp->rx_ring[0].num_rx_desc;
         ring->tx_pending = tp->tx_ring[0].num_tx_desc;
 }
@@ -5407,6 +5779,7 @@ static int rtl_get_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
         default:
                 VPD_addr = 0xD2;
                 VPD_data = 0xD4;
@@ -5518,6 +5891,7 @@ static int rtl8125_enable_eee(struct rtl8125_private *tp)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W16(tp, EEE_TXIDLE_TIMER_8125, eee->tx_lpi_timer);
 
                 SetMcuAccessRegBit(tp, 0xE040, (BIT_1|BIT_0));
@@ -5530,6 +5904,8 @@ static int rtl8125_enable_eee(struct rtl8125_private *tp)
                         SetEthPhyOcpBit(tp, 0xA6D4, BIT_0);
                 else
                         ClearEthPhyOcpBit(tp, 0xA6D4, BIT_0);
+                if (HW_SUPP_PHY_LINK_SPEED_5000M(tp))
+                        ClearEthPhyOcpBit(tp, 0xA6D4, BIT_1);
 
                 ClearEthPhyOcpBit(tp, 0xA6D8, BIT_4);
                 ClearEthPhyOcpBit(tp, 0xA428, BIT_7);
@@ -5549,6 +5925,7 @@ static int rtl8125_enable_eee(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_set_phy_mcu_patch_request(tp);
                 ClearMcuAccessRegBit(tp, 0xE052, BIT_0);
                 ClearEthPhyOcpBit(tp, 0xA442, BIT_12 | BIT_13);
@@ -5583,10 +5960,13 @@ static int rtl8125_disable_eee(struct rtl8125_private *tp)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 ClearMcuAccessRegBit(tp, 0xE040, (BIT_1|BIT_0));
 
                 ClearEthPhyOcpBit(tp, 0xA5D0, (BIT_2 | BIT_1));
                 ClearEthPhyOcpBit(tp, 0xA6D4, BIT_0);
+                if (HW_SUPP_PHY_LINK_SPEED_5000M(tp))
+                        ClearEthPhyOcpBit(tp, 0xA6D4, BIT_1);
 
                 ClearEthPhyOcpBit(tp, 0xA6D8, BIT_4);
                 ClearEthPhyOcpBit(tp, 0xA428, BIT_7);
@@ -5606,6 +5986,7 @@ static int rtl8125_disable_eee(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_set_phy_mcu_patch_request(tp);
                 ClearMcuAccessRegBit(tp, 0xE052, BIT_0);
                 ClearEthPhyOcpBit(tp, 0xA442, BIT_12 | BIT_13);
@@ -5647,17 +6028,30 @@ rtl8125_tx_lpi_timer_to_us(struct rtl8125_private *tp , u32 tx_lpi_timer)
         u32 to_us;
         u16 status;
 
-        //2.5G : tx_lpi_timer * 3.2ns
-        //Giga: tx_lpi_timer * 8ns
-        //100M : tx_lpi_timer * 80ns
         to_us = tx_lpi_timer * 80;
         status = RTL_R16(tp, PHYstatus);
         if (status & LinkStatus) {
                 /*link on*/
-                if (status & _2500bpsF)
-                        to_us = (tx_lpi_timer * 32) / 10;
-                else if (status & _1000bpsF)
-                        to_us = tx_lpi_timer * 8;
+                if (HW_SUPP_PHY_LINK_SPEED_5000M(tp)) {
+                        //5G : tx_lpi_timer * 12.8ns
+                        //2.5G : tx_lpi_timer * 25.6ns
+                        //Giga: tx_lpi_timer * 8ns
+                        //100M : tx_lpi_timer * 80ns
+                        if (status & (_5000bpsF))
+                                to_us = (tx_lpi_timer * 128) / 10;
+                        else if (status & _2500bpsF)
+                                to_us = (tx_lpi_timer * 256) / 10;
+                        else if (status & _1000bpsF)
+                                to_us = tx_lpi_timer * 8;
+                } else {
+                        //2.5G : tx_lpi_timer * 3.2ns
+                        //Giga: tx_lpi_timer * 8ns
+                        //100M : tx_lpi_timer * 80ns
+                        if (status & _2500bpsF)
+                                to_us = (tx_lpi_timer * 32) / 10;
+                        else if (status & _1000bpsF)
+                                to_us = tx_lpi_timer * 8;
+                }
         }
 
         //ns to us
@@ -5878,6 +6272,7 @@ static int rtl8125_enable_green_feature(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 mdio_direct_write_phy_ocp(tp, 0xA436, 0x8011);
                 SetEthPhyOcpBit(tp, 0xA438, BIT_15);
                 rtl8125_mdio_write(tp, 0x00, 0x9200);
@@ -5901,6 +6296,7 @@ static int rtl8125_disable_green_feature(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 mdio_direct_write_phy_ocp(tp, 0xA436, 0x8011);
                 ClearEthPhyOcpBit(tp, 0xA438, BIT_15);
                 rtl8125_mdio_write(tp, 0x00, 0x9200);
@@ -5947,6 +6343,11 @@ static void rtl8125_get_mac_version(struct rtl8125_private *tp)
                         tp->mcfg = CFG_METHOD_5;
                         tp->HwIcVerUnknown = TRUE;
                 }
+
+                tp->efuse_ver = EFUSE_SUPPORT_V4;
+                break;
+        case 0x64800000:
+                tp->mcfg = CFG_METHOD_8;
 
                 tp->efuse_ver = EFUSE_SUPPORT_V4;
                 break;
@@ -6010,6 +6411,7 @@ rtl8125_clear_phy_ups_reg(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 ClearEthPhyOcpBit(tp, 0xA466, BIT_0);
                 break;
         };
@@ -6026,7 +6428,8 @@ rtl8125_is_ups_resume(struct net_device *dev)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7)
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8)
                 return (rtl8125_mac_ocp_read(tp, 0xD42C) & BIT_8);
 
         return 0;
@@ -6058,7 +6461,8 @@ rtl8125_wait_phy_ups_resume(struct net_device *dev, u16 PhyState)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7) {
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 do {
                         TmpPhyState = mdio_direct_read_phy_ocp(tp, 0xA420);
                         TmpPhyState &= 0x7;
@@ -6096,17 +6500,9 @@ rtl8125_exit_oob(struct net_device *dev)
 
         rtl8125_disable_rx_packet_filter(tp);
 
-        switch (tp->mcfg) {
-        case CFG_METHOD_2:
-        case CFG_METHOD_3:
-        case CFG_METHOD_6:
-                rtl8125_dash2_disable_txrx(dev);
-                break;
-        }
-
-        if (tp->DASH) {
-                rtl8125_driver_stop(tp);
+        if (HW_DASH_SUPPORT_DASH(tp)) {
                 rtl8125_driver_start(tp);
+                rtl8125_dash2_disable_txrx(dev);
 #ifdef ENABLE_DASH_SUPPORT
                 DashHwInit(dev);
 #endif
@@ -6123,6 +6519,7 @@ rtl8125_exit_oob(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xC0BC, 0x00FF);
                 break;
         }
@@ -6137,6 +6534,7 @@ rtl8125_exit_oob(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_disable_now_is_oob(tp);
 
                 data16 = rtl8125_mac_ocp_read(tp, 0xE8DE) & ~BIT_14;
@@ -6159,6 +6557,7 @@ rtl8125_exit_oob(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 if (rtl8125_is_ups_resume(dev)) {
                         rtl8125_wait_phy_ups_resume(dev, 2);
                         rtl8125_clear_ups_resume_bit(dev);
@@ -6182,6 +6581,7 @@ rtl8125_hw_disable_mac_mcu_bps(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_enable_cfg9346_write(tp);
                 RTL_W8(tp, Config5, RTL_R8(tp, Config5) & ~BIT_0);
                 RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~BIT_7);
@@ -6196,6 +6596,7 @@ rtl8125_hw_disable_mac_mcu_bps(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xFC48, 0x0000);
                 break;
         }
@@ -6207,6 +6608,7 @@ rtl8125_hw_disable_mac_mcu_bps(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 for (regAddr = 0xFC28; regAddr < 0xFC48; regAddr += 2) {
                         rtl8125_mac_ocp_write(tp, regAddr, 0x0000);
                 }
@@ -6433,6 +6835,32 @@ rtl8125_set_mac_mcu_8125b_2(struct net_device *dev)
 }
 
 static void
+rtl8125_set_mac_mcu_8126a_1(struct net_device *dev)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+        static const u16 mcu_patch_code_8126a_1[] =  {
+                0xE010, 0xE019, 0xE01B, 0xE01D, 0xE01F, 0xE021, 0xE023, 0xE025, 0xE027,
+                0xE029, 0xE02B, 0xE02D, 0xE02F, 0xE031, 0xE033, 0xE035, 0x48C0, 0x9C66,
+                0x7446, 0x4840, 0x48C1, 0x48C2, 0x9C46, 0xC402, 0xBC00, 0x0AD6, 0xC602,
+                0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602,
+                0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602,
+                0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602,
+                0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602,
+                0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000, 0xC602, 0xBE00, 0x0000
+        };
+
+        rtl8125_hw_disable_mac_mcu_bps(dev);
+
+        rtl8125_write_mac_mcu_ram_code(tp, mcu_patch_code_8126a_1, ARRAY_SIZE(mcu_patch_code_8126a_1));
+
+        rtl8125_mac_ocp_write(tp, 0xFC26, 0x8000);
+
+        rtl8125_mac_ocp_write(tp, 0xFC28, 0x0AAA);
+
+        rtl8125_mac_ocp_write(tp, 0xFC48, 0x0001);
+}
+
+static void
 rtl8125_hw_mac_mcu_config(struct net_device *dev)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
@@ -6453,6 +6881,9 @@ rtl8125_hw_mac_mcu_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_7:
                 rtl8125_set_mac_mcu_8125b_2(dev);
+                break;
+        case CFG_METHOD_8:
+                rtl8125_set_mac_mcu_8126a_1(dev);
                 break;
         }
 }
@@ -6502,6 +6933,7 @@ rtl8125_hw_init(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_enable_cfg9346_write(tp);
                 RTL_W8(tp, Config5, RTL_R8(tp, Config5) & ~BIT_0);
                 RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~BIT_7);
@@ -6518,6 +6950,7 @@ rtl8125_hw_init(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xD40A, rtl8125_mac_ocp_read( tp, 0xD40A) & ~(BIT_4));
                 break;
         }
@@ -6533,7 +6966,8 @@ rtl8125_hw_init(struct net_device *dev)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7)
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8)
                 rtl8125_disable_ocp_phy_power_saving(dev);
 
         //Set PCIE uncorrectable error status mask pcie 0x108
@@ -6673,6 +7107,8 @@ rtl8125_hw_ephy_config(struct net_device *dev)
                 rtl8125_ephy_write(tp, 0x42, 0x60C2);
                 rtl8125_ephy_write(tp, 0x69, 0xFF00);
                 break;
+        case CFG_METHOD_8:
+                break;
         }
 }
 
@@ -6688,6 +7124,7 @@ rtl8125_get_hw_phy_mcu_code_ver(struct rtl8125_private *tp)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 mdio_direct_write_phy_ocp(tp, 0xA436, 0x801E);
                 hw_ram_code_ver = mdio_direct_read_phy_ocp(tp, 0xA438);
                 break;
@@ -6773,6 +7210,7 @@ rtl8125_write_hw_phy_mcu_code_ver(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 mdio_direct_write_phy_ocp(tp, 0xA436, 0x801E);
                 mdio_direct_write_phy_ocp(tp, 0xA438, tp->sw_ram_code_ver);
                 tp->hw_ram_code_ver = tp->sw_ram_code_ver;
@@ -9222,6 +9660,550 @@ static const u16 phy_mcu_ram_code_8125b_2[] = {
         0xFFFF, 0xFFFF
 };
 
+static const u16 phy_mcu_ram_code_8126a_1_1[] = {
+        0xa436, 0x8023, 0xa438, 0x4900, 0xa436, 0xB82E, 0xa438, 0x0001,
+        0xBFBA, 0xE000, 0xBF1A, 0xC1B9, 0xBFA8, 0x10F0, 0xBFB0, 0x0210,
+        0xBFB4, 0xE7E4, 0xb820, 0x0090, 0xa436, 0xA016, 0xa438, 0x0000,
+        0xa436, 0xA012, 0xa438, 0x0000, 0xa436, 0xA014, 0xa438, 0x1800,
+        0xa438, 0x8010, 0xa438, 0x1800, 0xa438, 0x8062, 0xa438, 0x1800,
+        0xa438, 0x8069, 0xa438, 0x1800, 0xa438, 0x80e2, 0xa438, 0x1800,
+        0xa438, 0x80eb, 0xa438, 0x1800, 0xa438, 0x80f5, 0xa438, 0x1800,
+        0xa438, 0x811b, 0xa438, 0x1800, 0xa438, 0x8120, 0xa438, 0xd500,
+        0xa438, 0xd049, 0xa438, 0xd1b9, 0xa438, 0xa208, 0xa438, 0x8208,
+        0xa438, 0xd503, 0xa438, 0xa104, 0xa438, 0x0c07, 0xa438, 0x0902,
+        0xa438, 0xd500, 0xa438, 0xbc10, 0xa438, 0xc484, 0xa438, 0xd503,
+        0xa438, 0xcc02, 0xa438, 0xcd0d, 0xa438, 0xaf01, 0xa438, 0xd500,
+        0xa438, 0xd703, 0xa438, 0x4531, 0xa438, 0xbd08, 0xa438, 0x1000,
+        0xa438, 0x16bb, 0xa438, 0xd75e, 0xa438, 0x5fb3, 0xa438, 0xd503,
+        0xa438, 0xd04d, 0xa438, 0xd1c7, 0xa438, 0x0cf0, 0xa438, 0x0e10,
+        0xa438, 0xd704, 0xa438, 0x5ffc, 0xa438, 0xd04d, 0xa438, 0xd1c7,
+        0xa438, 0x0cf0, 0xa438, 0x0e20, 0xa438, 0xd704, 0xa438, 0x5ffc,
+        0xa438, 0xd04d, 0xa438, 0xd1c7, 0xa438, 0x0cf0, 0xa438, 0x0e40,
+        0xa438, 0xd704, 0xa438, 0x5ffc, 0xa438, 0xd04d, 0xa438, 0xd1c7,
+        0xa438, 0x0cf0, 0xa438, 0x0e80, 0xa438, 0xd704, 0xa438, 0x5ffc,
+        0xa438, 0xd07b, 0xa438, 0xd1c5, 0xa438, 0x8ef0, 0xa438, 0xd704,
+        0xa438, 0x5ffc, 0xa438, 0x9d08, 0xa438, 0x1000, 0xa438, 0x16bb,
+        0xa438, 0xd75e, 0xa438, 0x7fb3, 0xa438, 0x1000, 0xa438, 0x16bb,
+        0xa438, 0xd75e, 0xa438, 0x5fad, 0xa438, 0x1000, 0xa438, 0x181f,
+        0xa438, 0xd703, 0xa438, 0x3181, 0xa438, 0x8059, 0xa438, 0x60ad,
+        0xa438, 0x1000, 0xa438, 0x16bb, 0xa438, 0xd703, 0xa438, 0x5fbb,
+        0xa438, 0x1000, 0xa438, 0x16bb, 0xa438, 0xd719, 0xa438, 0x7fa8,
+        0xa438, 0xd500, 0xa438, 0xd049, 0xa438, 0xd1b9, 0xa438, 0x1800,
+        0xa438, 0x0f0b, 0xa438, 0xd500, 0xa438, 0xd07b, 0xa438, 0xd1b5,
+        0xa438, 0xd0f6, 0xa438, 0xd1c5, 0xa438, 0x1800, 0xa438, 0x1049,
+        0xa438, 0xd707, 0xa438, 0x4121, 0xa438, 0xd706, 0xa438, 0x40fa,
+        0xa438, 0xd099, 0xa438, 0xd1c6, 0xa438, 0x1000, 0xa438, 0x16bb,
+        0xa438, 0xd704, 0xa438, 0x5fbc, 0xa438, 0xbc80, 0xa438, 0xc489,
+        0xa438, 0xd503, 0xa438, 0xcc08, 0xa438, 0xcd46, 0xa438, 0xaf01,
+        0xa438, 0xd500, 0xa438, 0x1000, 0xa438, 0x0903, 0xa438, 0x1000,
+        0xa438, 0x16bb, 0xa438, 0xd75e, 0xa438, 0x5f6d, 0xa438, 0x1000,
+        0xa438, 0x181f, 0xa438, 0xd504, 0xa438, 0xa210, 0xa438, 0xd500,
+        0xa438, 0x1000, 0xa438, 0x16bb, 0xa438, 0xd719, 0xa438, 0x5fbc,
+        0xa438, 0xd504, 0xa438, 0x8210, 0xa438, 0xd503, 0xa438, 0xc6d0,
+        0xa438, 0xa521, 0xa438, 0xcd49, 0xa438, 0xaf01, 0xa438, 0xd504,
+        0xa438, 0xa220, 0xa438, 0xd500, 0xa438, 0x1000, 0xa438, 0x16bb,
+        0xa438, 0xd75e, 0xa438, 0x5fad, 0xa438, 0x1000, 0xa438, 0x181f,
+        0xa438, 0xd503, 0xa438, 0xa704, 0xa438, 0x0c07, 0xa438, 0x0904,
+        0xa438, 0xd504, 0xa438, 0xa102, 0xa438, 0xd500, 0xa438, 0x1000,
+        0xa438, 0x16bb, 0xa438, 0xd718, 0xa438, 0x5fab, 0xa438, 0xd503,
+        0xa438, 0xc6f0, 0xa438, 0xa521, 0xa438, 0xd505, 0xa438, 0xa404,
+        0xa438, 0xd500, 0xa438, 0xd701, 0xa438, 0x6085, 0xa438, 0xd504,
+        0xa438, 0xc9f1, 0xa438, 0xf003, 0xa438, 0xd504, 0xa438, 0xc9f0,
+        0xa438, 0xd503, 0xa438, 0xcd4a, 0xa438, 0xaf01, 0xa438, 0xd500,
+        0xa438, 0xd504, 0xa438, 0xa802, 0xa438, 0xd500, 0xa438, 0x1000,
+        0xa438, 0x16bb, 0xa438, 0xd707, 0xa438, 0x5fb1, 0xa438, 0xd707,
+        0xa438, 0x5f10, 0xa438, 0xd505, 0xa438, 0xa402, 0xa438, 0xd503,
+        0xa438, 0xd707, 0xa438, 0x41a1, 0xa438, 0xd706, 0xa438, 0x60ba,
+        0xa438, 0x60fc, 0xa438, 0x0c07, 0xa438, 0x0204, 0xa438, 0xf009,
+        0xa438, 0x0c07, 0xa438, 0x0202, 0xa438, 0xf006, 0xa438, 0x0c07,
+        0xa438, 0x0206, 0xa438, 0xf003, 0xa438, 0x0c07, 0xa438, 0x0202,
+        0xa438, 0xd500, 0xa438, 0xd703, 0xa438, 0x3181, 0xa438, 0x80e0,
+        0xa438, 0x616d, 0xa438, 0xd701, 0xa438, 0x6065, 0xa438, 0x1800,
+        0xa438, 0x1229, 0xa438, 0x1000, 0xa438, 0x16bb, 0xa438, 0xd707,
+        0xa438, 0x6061, 0xa438, 0xd704, 0xa438, 0x5f7c, 0xa438, 0x1800,
+        0xa438, 0x124a, 0xa438, 0xd504, 0xa438, 0x8c0f, 0xa438, 0xd505,
+        0xa438, 0xa20e, 0xa438, 0xd500, 0xa438, 0x1000, 0xa438, 0x1871,
+        0xa438, 0x1800, 0xa438, 0x1899, 0xa438, 0xd70b, 0xa438, 0x60b0,
+        0xa438, 0xd05a, 0xa438, 0xd19a, 0xa438, 0x1800, 0xa438, 0x1aef,
+        0xa438, 0xd0ef, 0xa438, 0xd19a, 0xa438, 0x1800, 0xa438, 0x1aef,
+        0xa438, 0x1000, 0xa438, 0x1d09, 0xa438, 0xd708, 0xa438, 0x3399,
+        0xa438, 0x1b63, 0xa438, 0xd709, 0xa438, 0x5f5d, 0xa438, 0xd70b,
+        0xa438, 0x6130, 0xa438, 0xd70d, 0xa438, 0x6163, 0xa438, 0xd709,
+        0xa438, 0x430b, 0xa438, 0xd71e, 0xa438, 0x62c2, 0xa438, 0xb401,
+        0xa438, 0xf014, 0xa438, 0xc901, 0xa438, 0x1000, 0xa438, 0x810e,
+        0xa438, 0xf010, 0xa438, 0xc902, 0xa438, 0x1000, 0xa438, 0x810e,
+        0xa438, 0xf00c, 0xa438, 0xce04, 0xa438, 0xcf01, 0xa438, 0xd70a,
+        0xa438, 0x5fe2, 0xa438, 0xce04, 0xa438, 0xcf02, 0xa438, 0xc900,
+        0xa438, 0xd70a, 0xa438, 0x4057, 0xa438, 0xb401, 0xa438, 0x0800,
+        0xa438, 0x1800, 0xa438, 0x1b5d, 0xa438, 0xa480, 0xa438, 0xa2b0,
+        0xa438, 0xa806, 0xa438, 0x1800, 0xa438, 0x225c, 0xa438, 0xa7e8,
+        0xa438, 0xac08, 0xa438, 0x1800, 0xa438, 0x1a4e, 0xa436, 0xA026,
+        0xa438, 0x1a4d, 0xa436, 0xA024, 0xa438, 0x225a, 0xa436, 0xA022,
+        0xa438, 0x1b53, 0xa436, 0xA020, 0xa438, 0x1aed, 0xa436, 0xA006,
+        0xa438, 0x1892, 0xa436, 0xA004, 0xa438, 0x11a4, 0xa436, 0xA002,
+        0xa438, 0x103c, 0xa436, 0xA000, 0xa438, 0x0ea6, 0xa436, 0xA008,
+        0xa438, 0xff00, 0xa436, 0xA016, 0xa438, 0x0000, 0xa436, 0xA012,
+        0xa438, 0x0ff8, 0xa436, 0xA014, 0xa438, 0x0000, 0xa438, 0xD098,
+        0xa438, 0xc483, 0xa438, 0xc483, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa436, 0xA152, 0xa438, 0x3fff,
+        0xa436, 0xA154, 0xa438, 0x0413, 0xa436, 0xA156, 0xa438, 0x1A32,
+        0xa436, 0xA158, 0xa438, 0x1CC0, 0xa436, 0xA15A, 0xa438, 0x3fff,
+        0xa436, 0xA15C, 0xa438, 0x3fff, 0xa436, 0xA15E, 0xa438, 0x3fff,
+        0xa436, 0xA160, 0xa438, 0x3fff, 0xa436, 0xA150, 0xa438, 0x000E,
+        0xa436, 0xA016, 0xa438, 0x0020, 0xa436, 0xA012, 0xa438, 0x0000,
+        0xa436, 0xA014, 0xa438, 0x1800, 0xa438, 0x8010, 0xa438, 0x1800,
+        0xa438, 0x8021, 0xa438, 0x1800, 0xa438, 0x8037, 0xa438, 0x1800,
+        0xa438, 0x803f, 0xa438, 0x1800, 0xa438, 0x8084, 0xa438, 0x1800,
+        0xa438, 0x80c5, 0xa438, 0x1800, 0xa438, 0x80cc, 0xa438, 0x1800,
+        0xa438, 0x80d5, 0xa438, 0xa00a, 0xa438, 0xa280, 0xa438, 0xa404,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x1800, 0xa438, 0x099b, 0xa438, 0x1000, 0xa438, 0x1021,
+        0xa438, 0xd700, 0xa438, 0x5fab, 0xa438, 0xa208, 0xa438, 0x8204,
+        0xa438, 0xcb38, 0xa438, 0xaa40, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x1800, 0xa438, 0x0b2a,
+        0xa438, 0x82a0, 0xa438, 0x8404, 0xa438, 0xa110, 0xa438, 0xd706,
+        0xa438, 0x4041, 0xa438, 0xa180, 0xa438, 0x1800, 0xa438, 0x0e7f,
+        0xa438, 0x8190, 0xa438, 0xcb93, 0xa438, 0x1000, 0xa438, 0x0ef4,
+        0xa438, 0xd704, 0xa438, 0x7fb8, 0xa438, 0xa008, 0xa438, 0xd706,
+        0xa438, 0x4040, 0xa438, 0xa002, 0xa438, 0xd705, 0xa438, 0x4079,
+        0xa438, 0x1000, 0xa438, 0x10ad, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0x85f0, 0xa438, 0x9503, 0xa438, 0xd705, 0xa438, 0x40d9,
+        0xa438, 0xd70c, 0xa438, 0x6083, 0xa438, 0x0c1f, 0xa438, 0x0d09,
+        0xa438, 0xf003, 0xa438, 0x0c1f, 0xa438, 0x0d0a, 0xa438, 0x0cc0,
+        0xa438, 0x0d80, 0xa438, 0x1000, 0xa438, 0x104f, 0xa438, 0x1000,
+        0xa438, 0x0ef4, 0xa438, 0x8020, 0xa438, 0xd705, 0xa438, 0x40d9,
+        0xa438, 0xd704, 0xa438, 0x609f, 0xa438, 0xd70c, 0xa438, 0x6043,
+        0xa438, 0x8504, 0xa438, 0xcb94, 0xa438, 0x1000, 0xa438, 0x0ef4,
+        0xa438, 0xd706, 0xa438, 0x7fa2, 0xa438, 0x800a, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0x0cf0, 0xa438, 0x05a0, 0xa438, 0x9503,
+        0xa438, 0xd705, 0xa438, 0x40b9, 0xa438, 0x0c1f, 0xa438, 0x0d00,
+        0xa438, 0x8dc0, 0xa438, 0xf005, 0xa438, 0xa190, 0xa438, 0x0c1f,
+        0xa438, 0x0d17, 0xa438, 0x8dc0, 0xa438, 0x1000, 0xa438, 0x104f,
+        0xa438, 0xd705, 0xa438, 0x39cc, 0xa438, 0x0c7d, 0xa438, 0x1800,
+        0xa438, 0x0e67, 0xa438, 0xcb96, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0xab05, 0xa438, 0xac04, 0xa438, 0xac08, 0xa438, 0x9503,
+        0xa438, 0x0c1f, 0xa438, 0x0d00, 0xa438, 0x8dc0, 0xa438, 0x1000,
+        0xa438, 0x104f, 0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd706,
+        0xa438, 0x2215, 0xa438, 0x8099, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0xae02, 0xa438, 0x9503, 0xa438, 0xd706, 0xa438, 0x6451,
+        0xa438, 0xd71f, 0xa438, 0x2e70, 0xa438, 0x0f00, 0xa438, 0xd706,
+        0xa438, 0x3290, 0xa438, 0x80be, 0xa438, 0xd704, 0xa438, 0x2e70,
+        0xa438, 0x8090, 0xa438, 0xd706, 0xa438, 0x339c, 0xa438, 0x8090,
+        0xa438, 0x8718, 0xa438, 0x8910, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0xc500, 0xa438, 0x9503, 0xa438, 0x0c1f, 0xa438, 0x0d17,
+        0xa438, 0x8dc0, 0xa438, 0x1000, 0xa438, 0x104f, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0x8c04, 0xa438, 0x9503, 0xa438, 0xa00a,
+        0xa438, 0xa190, 0xa438, 0xa280, 0xa438, 0xa404, 0xa438, 0x1800,
+        0xa438, 0x0f35, 0xa438, 0x1800, 0xa438, 0x0f07, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0x8c08, 0xa438, 0x8c04, 0xa438, 0x9503,
+        0xa438, 0x1800, 0xa438, 0x0f02, 0xa438, 0x1000, 0xa438, 0x1021,
+        0xa438, 0xd700, 0xa438, 0x5fb4, 0xa438, 0xaa10, 0xa438, 0x1800,
+        0xa438, 0x0c6b, 0xa438, 0x82a0, 0xa438, 0x8406, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0xac04, 0xa438, 0x8602, 0xa438, 0x9503,
+        0xa438, 0x1800, 0xa438, 0x0e09, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x8308, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0xc555, 0xa438, 0x9503, 0xa438, 0xa728,
+        0xa438, 0x8440, 0xa438, 0x0c03, 0xa438, 0x0901, 0xa438, 0x8801,
+        0xa438, 0xd700, 0xa438, 0x4040, 0xa438, 0xa801, 0xa438, 0xd701,
+        0xa438, 0x4052, 0xa438, 0xa810, 0xa438, 0xd701, 0xa438, 0x4054,
+        0xa438, 0xa820, 0xa438, 0xd701, 0xa438, 0x4057, 0xa438, 0xa640,
+        0xa438, 0xd704, 0xa438, 0x4046, 0xa438, 0xa840, 0xa438, 0xd706,
+        0xa438, 0x40b5, 0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0xae20,
+        0xa438, 0x9503, 0xa438, 0xd401, 0xa438, 0x1000, 0xa438, 0x0fcf,
+        0xa438, 0x1000, 0xa438, 0x0fda, 0xa438, 0x1000, 0xa438, 0x1008,
+        0xa438, 0x1000, 0xa438, 0x0fe3, 0xa438, 0xcc00, 0xa438, 0x80c0,
+        0xa438, 0x8103, 0xa438, 0x83e0, 0xa438, 0xd71e, 0xa438, 0x2318,
+        0xa438, 0x01ae, 0xa438, 0xd704, 0xa438, 0x40bc, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0x8302, 0xa438, 0x9503, 0xa438, 0xb801,
+        0xa438, 0xd706, 0xa438, 0x2b59, 0xa438, 0x07f8, 0xa438, 0xd700,
+        0xa438, 0x2109, 0xa438, 0x04ab, 0xa438, 0xa508, 0xa438, 0xcb15,
+        0xa438, 0xd70c, 0xa438, 0x430c, 0xa438, 0x1000, 0xa438, 0x10ca,
+        0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0xa108, 0xa438, 0x9503,
+        0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0x0c1f, 0xa438, 0x0f13,
+        0xa438, 0x9503, 0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd70c,
+        0xa438, 0x5fb3, 0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0x8f1f,
+        0xa438, 0x9503, 0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd70c,
+        0xa438, 0x7f33, 0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0x0c0f,
+        0xa438, 0x0d00, 0xa438, 0x0c70, 0xa438, 0x0b00, 0xa438, 0xab08,
+        0xa438, 0x9503, 0xa438, 0xd704, 0xa438, 0x3cf1, 0xa438, 0x01f9,
+        0xa438, 0x0c1f, 0xa438, 0x0d11, 0xa438, 0xf003, 0xa438, 0x0c1f,
+        0xa438, 0x0d0d, 0xa438, 0x0cc0, 0xa438, 0x0d40, 0xa438, 0x1000,
+        0xa438, 0x104f, 0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0xab80,
+        0xa438, 0x9503, 0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xa940,
+        0xa438, 0xd700, 0xa438, 0x5f99, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0x8b80, 0xa438, 0x9503, 0xa438, 0x8940, 0xa438, 0xd700,
+        0xa438, 0x5bbf, 0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0x8b08,
+        0xa438, 0x9503, 0xa438, 0xba20, 0xa438, 0xd704, 0xa438, 0x4100,
+        0xa438, 0xd115, 0xa438, 0xd04f, 0xa438, 0xf001, 0xa438, 0x1000,
+        0xa438, 0x1021, 0xa438, 0xd700, 0xa438, 0x5fb4, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0x0c0f, 0xa438, 0x0d00, 0xa438, 0x0c70,
+        0xa438, 0x0b10, 0xa438, 0xab08, 0xa438, 0x9503, 0xa438, 0xd704,
+        0xa438, 0x3cf1, 0xa438, 0x8178, 0xa438, 0x0c1f, 0xa438, 0x0d11,
+        0xa438, 0xf003, 0xa438, 0x0c1f, 0xa438, 0x0d0d, 0xa438, 0x0cc0,
+        0xa438, 0x0d40, 0xa438, 0x1000, 0xa438, 0x104f, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0xab80, 0xa438, 0x9503, 0xa438, 0x1000,
+        0xa438, 0x1021, 0xa438, 0xd706, 0xa438, 0x5fad, 0xa438, 0xd407,
+        0xa438, 0x1000, 0xa438, 0x0fcf, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0x8b88, 0xa438, 0x9503, 0xa438, 0x1000, 0xa438, 0x1021,
+        0xa438, 0xd702, 0xa438, 0x7fa4, 0xa438, 0xd706, 0xa438, 0x61bf,
+        0xa438, 0x0c03, 0xa438, 0x1502, 0xa438, 0x0c30, 0xa438, 0x0110,
+        0xa438, 0xa304, 0xa438, 0x9503, 0xa438, 0xd199, 0xa438, 0xd04b,
+        0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd700, 0xa438, 0x5fb4,
+        0xa438, 0xd704, 0xa438, 0x3cf1, 0xa438, 0x81a5, 0xa438, 0x0c1f,
+        0xa438, 0x0d02, 0xa438, 0xf003, 0xa438, 0x0c1f, 0xa438, 0x0d01,
+        0xa438, 0x0cc0, 0xa438, 0x0d40, 0xa438, 0xa420, 0xa438, 0x8720,
+        0xa438, 0x1000, 0xa438, 0x104f, 0xa438, 0x1000, 0xa438, 0x0fda,
+        0xa438, 0xd70c, 0xa438, 0x41ac, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0x8108, 0xa438, 0x9503, 0xa438, 0x0cc0, 0xa438, 0x0040,
+        0xa438, 0x0c03, 0xa438, 0x0102, 0xa438, 0x0ce0, 0xa438, 0x03e0,
+        0xa438, 0xccce, 0xa438, 0xf008, 0xa438, 0x0cc0, 0xa438, 0x0040,
+        0xa438, 0x0c03, 0xa438, 0x0100, 0xa438, 0x0ce0, 0xa438, 0x0380,
+        0xa438, 0xcc9c, 0xa438, 0x1000, 0xa438, 0x103f, 0xa438, 0x0c03,
+        0xa438, 0x1502, 0xa438, 0xa640, 0xa438, 0x9503, 0xa438, 0xcb16,
+        0xa438, 0xd706, 0xa438, 0x6129, 0xa438, 0xd70c, 0xa438, 0x608c,
+        0xa438, 0xd17a, 0xa438, 0xd04a, 0xa438, 0xf006, 0xa438, 0xd17a,
+        0xa438, 0xd04b, 0xa438, 0xf003, 0xa438, 0xd13d, 0xa438, 0xd04b,
+        0xa438, 0x0c1f, 0xa438, 0x0f14, 0xa438, 0xcb17, 0xa438, 0x8fc0,
+        0xa438, 0x1000, 0xa438, 0x0fbd, 0xa438, 0xaf40, 0xa438, 0x1000,
+        0xa438, 0x0fbd, 0xa438, 0x0cc0, 0xa438, 0x0f80, 0xa438, 0x1000,
+        0xa438, 0x0fbd, 0xa438, 0xafc0, 0xa438, 0x1000, 0xa438, 0x0fbd,
+        0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd701, 0xa438, 0x652e,
+        0xa438, 0xd700, 0xa438, 0x5db4, 0xa438, 0x0c03, 0xa438, 0x1502,
+        0xa438, 0x8640, 0xa438, 0xa702, 0xa438, 0x9503, 0xa438, 0xa720,
+        0xa438, 0x1000, 0xa438, 0x0fda, 0xa438, 0xa108, 0xa438, 0x1000,
+        0xa438, 0x0fec, 0xa438, 0x8108, 0xa438, 0x1000, 0xa438, 0x0fe3,
+        0xa438, 0xa202, 0xa438, 0xa308, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x8308, 0xa438, 0xcb18,
+        0xa438, 0x1000, 0xa438, 0x10c2, 0xa438, 0x1000, 0xa438, 0x1021,
+        0xa438, 0xd70c, 0xa438, 0x2c60, 0xa438, 0x02bd, 0xa438, 0xff58,
+        0xa438, 0x8f1f, 0xa438, 0x1000, 0xa438, 0x1021, 0xa438, 0xd701,
+        0xa438, 0x7f8e, 0xa438, 0x1000, 0xa438, 0x0fe3, 0xa438, 0xa130,
+        0xa438, 0xaa2f, 0xa438, 0xa2d5, 0xa438, 0xa407, 0xa438, 0xa720,
+        0xa438, 0x8310, 0xa438, 0xa308, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x0000,
+        0xa438, 0x0000, 0xa438, 0x0000, 0xa438, 0x8308, 0xa438, 0x1800,
+        0xa438, 0x02d2, 0xa436, 0xA10E, 0xa438, 0x017f, 0xa436, 0xA10C,
+        0xa438, 0x0e04, 0xa436, 0xA10A, 0xa438, 0x0c67, 0xa436, 0xA108,
+        0xa438, 0x0f13, 0xa436, 0xA106, 0xa438, 0x0eb1, 0xa436, 0xA104,
+        0xa438, 0x0e79, 0xa436, 0xA102, 0xa438, 0x0b23, 0xa436, 0xA100,
+        0xa438, 0x0908, 0xa436, 0xA110, 0xa438, 0x00ff, 0xa436, 0xb87c,
+        0xa438, 0x8ad8, 0xa436, 0xb87e, 0xa438, 0xaf8a, 0xa438, 0xf0af,
+        0xa438, 0x8af9, 0xa438, 0xaf8d, 0xa438, 0xdaaf, 0xa438, 0x8e1c,
+        0xa438, 0xaf8f, 0xa438, 0x03af, 0xa438, 0x8f06, 0xa438, 0xaf8f,
+        0xa438, 0x06af, 0xa438, 0x8f06, 0xa438, 0x0265, 0xa438, 0xa002,
+        0xa438, 0x8d78, 0xa438, 0xaf23, 0xa438, 0x47a1, 0xa438, 0x0d06,
+        0xa438, 0x028b, 0xa438, 0x05af, 0xa438, 0x225a, 0xa438, 0xaf22,
+        0xa438, 0x66f8, 0xa438, 0xe08a, 0xa438, 0x33a0, 0xa438, 0x0005,
+        0xa438, 0x028b, 0xa438, 0x21ae, 0xa438, 0x0ea0, 0xa438, 0x0105,
+        0xa438, 0x028b, 0xa438, 0xb3ae, 0xa438, 0x06a0, 0xa438, 0x0203,
+        0xa438, 0x028c, 0xa438, 0x9dfc, 0xa438, 0x04f8, 0xa438, 0xfbfa,
+        0xa438, 0xef69, 0xa438, 0xe080, 0xa438, 0x13ad, 0xa438, 0x267e,
+        0xa438, 0xd067, 0xa438, 0xe48a, 0xa438, 0x34e4, 0xa438, 0x8a36,
+        0xa438, 0xe48a, 0xa438, 0x38e4, 0xa438, 0x8a3a, 0xa438, 0xd0ae,
+        0xa438, 0xe48a, 0xa438, 0x35e4, 0xa438, 0x8a37, 0xa438, 0xe48a,
+        0xa438, 0x39e4, 0xa438, 0x8a3b, 0xa438, 0xd000, 0xa438, 0xe48a,
+        0xa438, 0x3ce4, 0xa438, 0x8a3d, 0xa438, 0xe48a, 0xa438, 0x3ee4,
+        0xa438, 0x8a3f, 0xa438, 0xe48a, 0xa438, 0x40e4, 0xa438, 0x8a41,
+        0xa438, 0xe48a, 0xa438, 0x42e4, 0xa438, 0x8a43, 0xa438, 0xe48a,
+        0xa438, 0x44d0, 0xa438, 0x02e4, 0xa438, 0x8a45, 0xa438, 0xd00a,
+        0xa438, 0xe48a, 0xa438, 0x46d0, 0xa438, 0x16e4, 0xa438, 0x8a47,
+        0xa438, 0xd01e, 0xa438, 0xe48a, 0xa438, 0x48d1, 0xa438, 0x02bf,
+        0xa438, 0x8dce, 0xa438, 0x026b, 0xa438, 0xd0d1, 0xa438, 0x0abf,
+        0xa438, 0x8dd1, 0xa438, 0x026b, 0xa438, 0xd0d1, 0xa438, 0x16bf,
+        0xa438, 0x8dd4, 0xa438, 0x026b, 0xa438, 0xd0d1, 0xa438, 0x1ebf,
+        0xa438, 0x8dd7, 0xa438, 0x026b, 0xa438, 0xd002, 0xa438, 0x73ab,
+        0xa438, 0xef47, 0xa438, 0xe585, 0xa438, 0x5de4, 0xa438, 0x855c,
+        0xa438, 0xee8a, 0xa438, 0x3301, 0xa438, 0xae03, 0xa438, 0x0224,
+        0xa438, 0x95ef, 0xa438, 0x96fe, 0xa438, 0xfffc, 0xa438, 0x04f8,
+        0xa438, 0xf9fa, 0xa438, 0xcefa, 0xa438, 0xef69, 0xa438, 0xfb02,
+        0xa438, 0x8dab, 0xa438, 0xad50, 0xa438, 0x2ee1, 0xa438, 0x8a44,
+        0xa438, 0xa104, 0xa438, 0x2bee, 0xa438, 0x8a33, 0xa438, 0x02e1,
+        0xa438, 0x8a45, 0xa438, 0xbf8d, 0xa438, 0xce02, 0xa438, 0x6bd0,
+        0xa438, 0xe18a, 0xa438, 0x46bf, 0xa438, 0x8dd1, 0xa438, 0x026b,
+        0xa438, 0xd0e1, 0xa438, 0x8a47, 0xa438, 0xbf8d, 0xa438, 0xd402,
+        0xa438, 0x6bd0, 0xa438, 0xe18a, 0xa438, 0x48bf, 0xa438, 0x8dd7,
+        0xa438, 0x026b, 0xa438, 0xd0af, 0xa438, 0x8c94, 0xa438, 0xd200,
+        0xa438, 0xbe00, 0xa438, 0x0002, 0xa438, 0x8ca5, 0xa438, 0x12a2,
+        0xa438, 0x04f6, 0xa438, 0xe18a, 0xa438, 0x44a1, 0xa438, 0x0020,
+        0xa438, 0xd129, 0xa438, 0xbf8d, 0xa438, 0xce02, 0xa438, 0x6bd0,
+        0xa438, 0xd121, 0xa438, 0xbf8d, 0xa438, 0xd102, 0xa438, 0x6bd0,
+        0xa438, 0xd125, 0xa438, 0xbf8d, 0xa438, 0xd402, 0xa438, 0x6bd0,
+        0xa438, 0xbf8d, 0xa438, 0xd702, 0xa438, 0x6bd0, 0xa438, 0xae44,
+        0xa438, 0xa101, 0xa438, 0x1ed1, 0xa438, 0x31bf, 0xa438, 0x8dce,
+        0xa438, 0x026b, 0xa438, 0xd0bf, 0xa438, 0x8dd1, 0xa438, 0x026b,
+        0xa438, 0xd0d1, 0xa438, 0x2dbf, 0xa438, 0x8dd4, 0xa438, 0x026b,
+        0xa438, 0xd0bf, 0xa438, 0x8dd7, 0xa438, 0x026b, 0xa438, 0xd0ae,
+        0xa438, 0x23a1, 0xa438, 0x0220, 0xa438, 0xd139, 0xa438, 0xbf8d,
+        0xa438, 0xce02, 0xa438, 0x6bd0, 0xa438, 0xbf8d, 0xa438, 0xd102,
+        0xa438, 0x6bd0, 0xa438, 0xd13d, 0xa438, 0xbf8d, 0xa438, 0xd402,
+        0xa438, 0x6bd0, 0xa438, 0xd135, 0xa438, 0xbf8d, 0xa438, 0xd702,
+        0xa438, 0x6bd0, 0xa438, 0xae00, 0xa438, 0xe18a, 0xa438, 0x4411,
+        0xa438, 0xe58a, 0xa438, 0x44d0, 0xa438, 0x00e4, 0xa438, 0x8a3c,
+        0xa438, 0xe48a, 0xa438, 0x3de4, 0xa438, 0x8a3e, 0xa438, 0xe48a,
+        0xa438, 0x3fe4, 0xa438, 0x8a40, 0xa438, 0xe48a, 0xa438, 0x41e4,
+        0xa438, 0x8a42, 0xa438, 0xe48a, 0xa438, 0x4302, 0xa438, 0x73ab,
+        0xa438, 0xef47, 0xa438, 0xe585, 0xa438, 0x5de4, 0xa438, 0x855c,
+        0xa438, 0xffef, 0xa438, 0x96fe, 0xa438, 0xc6fe, 0xa438, 0xfdfc,
+        0xa438, 0x0402, 0xa438, 0x2495, 0xa438, 0xee8a, 0xa438, 0x3300,
+        0xa438, 0x04f8, 0xa438, 0xf9fa, 0xa438, 0xfbef, 0xa438, 0x79fb,
+        0xa438, 0xcffb, 0xa438, 0xd300, 0xa438, 0xa200, 0xa438, 0x09bf,
+        0xa438, 0x8dc2, 0xa438, 0x026b, 0xa438, 0xefaf, 0xa438, 0x8cda,
+        0xa438, 0xa201, 0xa438, 0x09bf, 0xa438, 0x8dc5, 0xa438, 0x026b,
+        0xa438, 0xefaf, 0xa438, 0x8cda, 0xa438, 0xa202, 0xa438, 0x09bf,
+        0xa438, 0x8dc8, 0xa438, 0x026b, 0xa438, 0xefaf, 0xa438, 0x8cda,
+        0xa438, 0xbf8d, 0xa438, 0xcb02, 0xa438, 0x6bef, 0xa438, 0xef64,
+        0xa438, 0xbf8a, 0xa438, 0x3c1a, 0xa438, 0x921a, 0xa438, 0x92d8,
+        0xa438, 0x19d9, 0xa438, 0xef74, 0xa438, 0x0273, 0xa438, 0x93ef,
+        0xa438, 0x47bf, 0xa438, 0x8a3c, 0xa438, 0x1a92, 0xa438, 0x1a92,
+        0xa438, 0xdc19, 0xa438, 0xddd1, 0xa438, 0x0011, 0xa438, 0xa1ff,
+        0xa438, 0xfc13, 0xa438, 0xa310, 0xa438, 0xaf02, 0xa438, 0x8d0e,
+        0xa438, 0xffc7, 0xa438, 0xffef, 0xa438, 0x97ff, 0xa438, 0xfefd,
+        0xa438, 0xfc04, 0xa438, 0xf8fa, 0xa438, 0xfbef, 0xa438, 0x79fb,
+        0xa438, 0xcffb, 0xa438, 0xbf8a, 0xa438, 0x3c1a, 0xa438, 0x921a,
+        0xa438, 0x92d8, 0xa438, 0x19d9, 0xa438, 0xef64, 0xa438, 0xbf8a,
+        0xa438, 0x341a, 0xa438, 0x921a, 0xa438, 0x92d8, 0xa438, 0x19d9,
+        0xa438, 0xef74, 0xa438, 0x0273, 0xa438, 0x78a2, 0xa438, 0x0005,
+        0xa438, 0xbe8d, 0xa438, 0xceae, 0xa438, 0x13a2, 0xa438, 0x0105,
+        0xa438, 0xbe8d, 0xa438, 0xd1ae, 0xa438, 0x0ba2, 0xa438, 0x0205,
+        0xa438, 0xbe8d, 0xa438, 0xd4ae, 0xa438, 0x03be, 0xa438, 0x8dd7,
+        0xa438, 0xad50, 0xa438, 0x17bf, 0xa438, 0x8a45, 0xa438, 0x1a92,
+        0xa438, 0x0702, 0xa438, 0x6bef, 0xa438, 0x07dd, 0xa438, 0xef46,
+        0xa438, 0xbf8a, 0xa438, 0x341a, 0xa438, 0x921a, 0xa438, 0x92dc,
+        0xa438, 0x19dd, 0xa438, 0xffc7, 0xa438, 0xffef, 0xa438, 0x97ff,
+        0xa438, 0xfefc, 0xa438, 0x04ee, 0xa438, 0x8a33, 0xa438, 0x00ee,
+        0xa438, 0x8a32, 0xa438, 0x0404, 0xa438, 0xf8fa, 0xa438, 0xef69,
+        0xa438, 0xe080, 0xa438, 0x13ad, 0xa438, 0x2624, 0xa438, 0xd102,
+        0xa438, 0xbf8d, 0xa438, 0xce02, 0xa438, 0x6bd0, 0xa438, 0xd10a,
+        0xa438, 0xbf8d, 0xa438, 0xd102, 0xa438, 0x6bd0, 0xa438, 0xd116,
+        0xa438, 0xbf8d, 0xa438, 0xd402, 0xa438, 0x6bd0, 0xa438, 0xd11e,
+        0xa438, 0xbf8d, 0xa438, 0xd702, 0xa438, 0x6bd0, 0xa438, 0xee8a,
+        0xa438, 0x3300, 0xa438, 0xef96, 0xa438, 0xfefc, 0xa438, 0x04f8,
+        0xa438, 0xfae0, 0xa438, 0x855c, 0xa438, 0xe185, 0xa438, 0x5def,
+        0xa438, 0x64d0, 0xa438, 0x00e1, 0xa438, 0x8a32, 0xa438, 0xef74,
+        0xa438, 0x0273, 0xa438, 0xc6fe, 0xa438, 0xfc04, 0xa438, 0xf0b2,
+        0xa438, 0x02f0, 0xa438, 0xb282, 0xa438, 0xf0b3, 0xa438, 0x02f0,
+        0xa438, 0xb382, 0xa438, 0x50ac, 0xa438, 0xd450, 0xa438, 0xacd6,
+        0xa438, 0xb6ac, 0xa438, 0xd4b6, 0xa438, 0xacd6, 0xa438, 0xbf8e,
+        0xa438, 0x0d02, 0xa438, 0x6bd0, 0xa438, 0xd0ff, 0xa438, 0xd1fe,
+        0xa438, 0xbf8e, 0xa438, 0x1002, 0xa438, 0x6bd0, 0xa438, 0xd004,
+        0xa438, 0xd14d, 0xa438, 0xbf8e, 0xa438, 0x1302, 0xa438, 0x6bd0,
+        0xa438, 0xd0fc, 0xa438, 0xd1c6, 0xa438, 0xbf8e, 0xa438, 0x1602,
+        0xa438, 0x6bd0, 0xa438, 0xd009, 0xa438, 0xd146, 0xa438, 0xbf8e,
+        0xa438, 0x1902, 0xa438, 0x6bd0, 0xa438, 0xef13, 0xa438, 0xaf2d,
+        0xa438, 0xbdf0, 0xa438, 0xac1c, 0xa438, 0xf0ac, 0xa438, 0x2af0,
+        0xa438, 0xac2c, 0xa438, 0xf0ac, 0xa438, 0x2ef0, 0xa438, 0xac30,
+        0xa438, 0xbf8e, 0xa438, 0xf102, 0xa438, 0x6bef, 0xa438, 0xac28,
+        0xa438, 0x70bf, 0xa438, 0x8eeb, 0xa438, 0x026b, 0xa438, 0xefac,
+        0xa438, 0x2867, 0xa438, 0xbf8e, 0xa438, 0xee02, 0xa438, 0x6bef,
+        0xa438, 0xad28, 0xa438, 0x5bbf, 0xa438, 0x8ff2, 0xa438, 0xd8bf,
+        0xa438, 0x8ff3, 0xa438, 0xd9bf, 0xa438, 0x8ef4, 0xa438, 0x026b,
+        0xa438, 0xd0bf, 0xa438, 0x8ff0, 0xa438, 0xd8bf, 0xa438, 0x8ff1,
+        0xa438, 0xd9bf, 0xa438, 0x8ef7, 0xa438, 0x026b, 0xa438, 0xd0bf,
+        0xa438, 0x8fee, 0xa438, 0xd8bf, 0xa438, 0x8fef, 0xa438, 0xd9bf,
+        0xa438, 0x8efa, 0xa438, 0x026b, 0xa438, 0xd0bf, 0xa438, 0x8fec,
+        0xa438, 0xd8bf, 0xa438, 0x8fed, 0xa438, 0xd9bf, 0xa438, 0x8efd,
+        0xa438, 0x026b, 0xa438, 0xd0bf, 0xa438, 0x8fea, 0xa438, 0xd8bf,
+        0xa438, 0x8feb, 0xa438, 0xd9bf, 0xa438, 0x8f00, 0xa438, 0x026b,
+        0xa438, 0xd0bf, 0xa438, 0x8fe8, 0xa438, 0xd8bf, 0xa438, 0x8fe9,
+        0xa438, 0xd9bf, 0xa438, 0x8e0d, 0xa438, 0x026b, 0xa438, 0xd01f,
+        0xa438, 0x00e1, 0xa438, 0x86ee, 0xa438, 0x1b64, 0xa438, 0xaf3d,
+        0xa438, 0x7abf, 0xa438, 0x8ffe, 0xa438, 0xd8bf, 0xa438, 0x8fff,
+        0xa438, 0xd9bf, 0xa438, 0x8ef4, 0xa438, 0x026b, 0xa438, 0xd0bf,
+        0xa438, 0x8ffc, 0xa438, 0xd8bf, 0xa438, 0x8ffd, 0xa438, 0xd9bf,
+        0xa438, 0x8ef7, 0xa438, 0x026b, 0xa438, 0xd0bf, 0xa438, 0x8ffa,
+        0xa438, 0xd8bf, 0xa438, 0x8ffb, 0xa438, 0xd9bf, 0xa438, 0x8efa,
+        0xa438, 0x026b, 0xa438, 0xd0bf, 0xa438, 0x8ff8, 0xa438, 0xd8bf,
+        0xa438, 0x8ff9, 0xa438, 0xd9bf, 0xa438, 0x8efd, 0xa438, 0x026b,
+        0xa438, 0xd0bf, 0xa438, 0x8ff6, 0xa438, 0xd8bf, 0xa438, 0x8ff7,
+        0xa438, 0xd9bf, 0xa438, 0x8f00, 0xa438, 0x026b, 0xa438, 0xd0bf,
+        0xa438, 0x8ff4, 0xa438, 0xd8bf, 0xa438, 0x8ff5, 0xa438, 0xd9bf,
+        0xa438, 0x8e0d, 0xa438, 0x026b, 0xa438, 0xd0ae, 0xa438, 0xa766,
+        0xa438, 0xac5c, 0xa438, 0xbbac, 0xa438, 0x5c99, 0xa438, 0xac5c,
+        0xa438, 0xf0ac, 0xa438, 0x26f0, 0xa438, 0xac24, 0xa438, 0xf0ac,
+        0xa438, 0x22f0, 0xa438, 0xac20, 0xa438, 0xf0ac, 0xa438, 0x1eaf,
+        0xa438, 0x44f8, 0xa436, 0xb85e, 0xa438, 0x2344, 0xa436, 0xb860,
+        0xa438, 0x2254, 0xa436, 0xb862, 0xa438, 0x2DB5, 0xa436, 0xb864,
+        0xa438, 0x3D6C, 0xa436, 0xb886, 0xa438, 0x44ED, 0xa436, 0xb888,
+        0xa438, 0xffff, 0xa436, 0xb88a, 0xa438, 0xffff, 0xa436, 0xb88c,
+        0xa438, 0xffff, 0xa436, 0xb838, 0xa438, 0x001f, 0xb820, 0x0010,
+        0xa436, 0x87ad, 0xa438, 0xaf87, 0xa438, 0xc5af, 0xa438, 0x87e4,
+        0xa438, 0xaf8a, 0xa438, 0x3daf, 0xa438, 0x8a62, 0xa438, 0xaf8a,
+        0xa438, 0x62af, 0xa438, 0x8a62, 0xa438, 0xaf8a, 0xa438, 0x62af,
+        0xa438, 0x8a62, 0xa438, 0x2810, 0xa438, 0x0d01, 0xa438, 0xe484,
+        0xa438, 0xbf29, 0xa438, 0x100d, 0xa438, 0x11e5, 0xa438, 0x84c0,
+        0xa438, 0x2a10, 0xa438, 0x0d21, 0xa438, 0xe684, 0xa438, 0xc12b,
+        0xa438, 0x100d, 0xa438, 0x31e7, 0xa438, 0x84c2, 0xa438, 0xaf3f,
+        0xa438, 0x7cf8, 0xa438, 0xe080, 0xa438, 0x4cac, 0xa438, 0x222c,
+        0xa438, 0xe080, 0xa438, 0x40ad, 0xa438, 0x2232, 0xa438, 0xbf8a,
+        0xa438, 0x2502, 0xa438, 0x6752, 0xa438, 0xad29, 0xa438, 0x0502,
+        0xa438, 0x8827, 0xa438, 0xae0d, 0xa438, 0xad28, 0xa438, 0x0502,
+        0xa438, 0x8961, 0xa438, 0xae05, 0xa438, 0x0214, 0xa438, 0x04ae,
+        0xa438, 0x00e0, 0xa438, 0x8040, 0xa438, 0xac22, 0xa438, 0x1102,
+        0xa438, 0x13e1, 0xa438, 0xae0c, 0xa438, 0x0288, 0xa438, 0x7c02,
+        0xa438, 0x8a10, 0xa438, 0x0214, 0xa438, 0x2502, 0xa438, 0x1404,
+        0xa438, 0xfcaf, 0xa438, 0x13c6, 0xa438, 0xf8f8, 0xa438, 0xccf9,
+        0xa438, 0xfaef, 0xa438, 0x69fb, 0xa438, 0xe080, 0xa438, 0x18ad,
+        0xa438, 0x223b, 0xa438, 0xbf8a, 0xa438, 0x2b02, 0xa438, 0x6752,
+        0xa438, 0xad28, 0xa438, 0x32bf, 0xa438, 0x8a28, 0xa438, 0x026f,
+        0xa438, 0x17ee, 0xa438, 0x8ff3, 0xa438, 0x00bf, 0xa438, 0x6854,
+        0xa438, 0x0267, 0xa438, 0x52ad, 0xa438, 0x281f, 0xa438, 0xbf68,
+        0xa438, 0x5d02, 0xa438, 0x6752, 0xa438, 0xad28, 0xa438, 0x16e0,
+        0xa438, 0x8ff4, 0xa438, 0xe18f, 0xa438, 0xf502, 0xa438, 0x8891,
+        0xa438, 0xad50, 0xa438, 0x0abf, 0xa438, 0x8a28, 0xa438, 0x026f,
+        0xa438, 0x20ee, 0xa438, 0x8ff3, 0xa438, 0x0102, 0xa438, 0x1404,
+        0xa438, 0xffef, 0xa438, 0x96fe, 0xa438, 0xfdc4, 0xa438, 0xfcfc,
+        0xa438, 0x04f8, 0xa438, 0xf9ef, 0xa438, 0x59e0, 0xa438, 0x8018,
+        0xa438, 0xad22, 0xa438, 0x06bf, 0xa438, 0x8a28, 0xa438, 0x026f,
+        0xa438, 0x17ef, 0xa438, 0x95fd, 0xa438, 0xfc04, 0xa438, 0xf8f9,
+        0xa438, 0xf9ef, 0xa438, 0x59fa, 0xa438, 0xface, 0xa438, 0xe48f,
+        0xa438, 0xfee5, 0xa438, 0x8fff, 0xa438, 0xbf6e, 0xa438, 0x1b02,
+        0xa438, 0x6f20, 0xa438, 0xbf6e, 0xa438, 0x1802, 0xa438, 0x6f17,
+        0xa438, 0xd102, 0xa438, 0xbf6e, 0xa438, 0x1202, 0xa438, 0x6733,
+        0xa438, 0xbf6e, 0xa438, 0x1502, 0xa438, 0x6f17, 0xa438, 0xbe00,
+        0xa438, 0x00cc, 0xa438, 0xbf69, 0xa438, 0xcb02, 0xa438, 0x6733,
+        0xa438, 0xbf69, 0xa438, 0xce02, 0xa438, 0x6f17, 0xa438, 0xbf69,
+        0xa438, 0xce02, 0xa438, 0x6f20, 0xa438, 0xbf69, 0xa438, 0xd102,
+        0xa438, 0x6752, 0xa438, 0xad28, 0xa438, 0xf70c, 0xa438, 0x81bf,
+        0xa438, 0x8ff6, 0xa438, 0x1a98, 0xa438, 0xef59, 0xa438, 0xbf69,
+        0xa438, 0xd402, 0xa438, 0x6752, 0xa438, 0xef95, 0xa438, 0xdc19,
+        0xa438, 0xdd0d, 0xa438, 0x8118, 0xa438, 0xa800, 0xa438, 0x04c9,
+        0xa438, 0xbf69, 0xa438, 0xce02, 0xa438, 0x6f17, 0xa438, 0xe08f,
+        0xa438, 0xfce1, 0xa438, 0x8ffd, 0xa438, 0xef74, 0xa438, 0xe08f,
+        0xa438, 0xfae1, 0xa438, 0x8ffb, 0xa438, 0xef64, 0xa438, 0x026e,
+        0xa438, 0x57ad, 0xa438, 0x5008, 0xa438, 0xe08f, 0xa438, 0xfce1,
+        0xa438, 0x8ffd, 0xa438, 0xae06, 0xa438, 0xe08f, 0xa438, 0xfae1,
+        0xa438, 0x8ffb, 0xa438, 0xe28f, 0xa438, 0xf8e3, 0xa438, 0x8ff9,
+        0xa438, 0xef75, 0xa438, 0xe28f, 0xa438, 0xf6e3, 0xa438, 0x8ff7,
+        0xa438, 0xef65, 0xa438, 0x026e, 0xa438, 0x57ad, 0xa438, 0x5008,
+        0xa438, 0xe28f, 0xa438, 0xf8e3, 0xa438, 0x8ff9, 0xa438, 0xae06,
+        0xa438, 0xe28f, 0xa438, 0xf6e3, 0xa438, 0x8ff7, 0xa438, 0x1b45,
+        0xa438, 0xad27, 0xa438, 0x05d7, 0xa438, 0x0000, 0xa438, 0xae0d,
+        0xa438, 0xef74, 0xa438, 0xe08f, 0xa438, 0xfee1, 0xa438, 0x8fff,
+        0xa438, 0xef64, 0xa438, 0x026e, 0xa438, 0x57c6, 0xa438, 0xfefe,
+        0xa438, 0xef95, 0xa438, 0xfdfd, 0xa438, 0xfc04, 0xa438, 0xf8f9,
+        0xa438, 0xfaef, 0xa438, 0x69fb, 0xa438, 0xe080, 0xa438, 0x18ac,
+        0xa438, 0x2103, 0xa438, 0xaf8a, 0xa438, 0x06bf, 0xa438, 0x8a2b,
+        0xa438, 0xac21, 0xa438, 0x03af, 0xa438, 0x8a06, 0xa438, 0xbf8a,
+        0xa438, 0x2802, 0xa438, 0x6f17, 0xa438, 0xee8f, 0xa438, 0xee00,
+        0xa438, 0xee8f, 0xa438, 0xed00, 0xa438, 0xbf8a, 0xa438, 0x2e02,
+        0xa438, 0x6752, 0xa438, 0xad28, 0xa438, 0x03af, 0xa438, 0x8a06,
+        0xa438, 0xe28f, 0xa438, 0xefe3, 0xa438, 0x8ff0, 0xa438, 0xbf68,
+        0xa438, 0x5102, 0xa438, 0x6752, 0xa438, 0xac28, 0xa438, 0x11e2,
+        0xa438, 0x8ff1, 0xa438, 0xe38f, 0xa438, 0xf2bf, 0xa438, 0x6848,
+        0xa438, 0x0267, 0xa438, 0x52ac, 0xa438, 0x2802, 0xa438, 0xae53,
+        0xa438, 0xbf68, 0xa438, 0x5a02, 0xa438, 0x6752, 0xa438, 0xad28,
+        0xa438, 0x0aef, 0xa438, 0x4502, 0xa438, 0x8891, 0xa438, 0xac50,
+        0xa438, 0x38ae, 0xa438, 0x40bf, 0xa438, 0x8a31, 0xa438, 0x0267,
+        0xa438, 0x52ef, 0xa438, 0x31bf, 0xa438, 0x8a34, 0xa438, 0x0267,
+        0xa438, 0x520c, 0xa438, 0x311e, 0xa438, 0x31bf, 0xa438, 0x8a37,
+        0xa438, 0x0267, 0xa438, 0x520c, 0xa438, 0x311e, 0xa438, 0x31bf,
+        0xa438, 0x8a3a, 0xa438, 0x0267, 0xa438, 0x520c, 0xa438, 0x311e,
+        0xa438, 0x31e7, 0xa438, 0x8fee, 0xa438, 0xa30c, 0xa438, 0x02ae,
+        0xa438, 0x08a3, 0xa438, 0x0e02, 0xa438, 0xae03, 0xa438, 0xa30d,
+        0xa438, 0x0aee, 0xa438, 0x8fed, 0xa438, 0x01bf, 0xa438, 0x8a28,
+        0xa438, 0x026f, 0xa438, 0x2002, 0xa438, 0x1404, 0xa438, 0xffef,
+        0xa438, 0x96fe, 0xa438, 0xfdfc, 0xa438, 0x04f8, 0xa438, 0xfaef,
+        0xa438, 0x69e0, 0xa438, 0x8018, 0xa438, 0xad21, 0xa438, 0x06bf,
+        0xa438, 0x8a28, 0xa438, 0x026f, 0xa438, 0x17ef, 0xa438, 0x96fe,
+        0xa438, 0xfc04, 0xa438, 0xf8a4, 0xa438, 0xb677, 0xa438, 0xa4b6,
+        0xa438, 0x22a4, 0xa438, 0x4222, 0xa438, 0xa668, 0xa438, 0x00b2,
+        0xa438, 0x3e00, 0xa438, 0xb2be, 0xa438, 0x00b3, 0xa438, 0x3e00,
+        0xa438, 0xb3be, 0xa438, 0xd10f, 0xa438, 0xbf8a, 0xa438, 0x5c02,
+        0xa438, 0x6733, 0xa438, 0xbf8a, 0xa438, 0x5f02, 0xa438, 0x6733,
+        0xa438, 0xbf8a, 0xa438, 0x5c02, 0xa438, 0x6f17, 0xa438, 0xbf8a,
+        0xa438, 0x5f02, 0xa438, 0x6f17, 0xa438, 0x1f00, 0xa438, 0xaf3d,
+        0xa438, 0x0c30, 0xa438, 0xa85a, 0xa438, 0xfcad, 0xa438, 0x0e00,
+        0xa436, 0xb818, 0xa438, 0x3f31, 0xa436, 0xb81a, 0xa438, 0x13a4,
+        0xa436, 0xb81c, 0xa438, 0x3d0a, 0xa436, 0xb81e, 0xa438, 0xffff,
+        0xa436, 0xb850, 0xa438, 0xffff, 0xa436, 0xb852, 0xa438, 0xffff,
+        0xa436, 0xb878, 0xa438, 0xffff, 0xa436, 0xb884, 0xa438, 0xffff,
+        0xa436, 0xb832, 0xa438, 0x0007, 0xa436, 0x84cf, 0xa438, 0x0101,
+        0xa466, 0x0002, 0xa436, 0x86a7, 0xa438, 0x0000, 0xa436, 0x0000,
+        0xa438, 0x0000, 0xa436, 0xB82E, 0xa438, 0x0000, 0xa436, 0x8023,
+        0xa438, 0x0000, 0xa436, 0x801E, 0xa438, 0x0023, 0xb820, 0x0000,
+        0xFFFF, 0xFFFF
+};
+
+static const u16 phy_mcu_ram_code_8126a_1_2[] = {
+        0xB87C, 0x8a32, 0xB87E, 0x0400, 0xB87C, 0x8376, 0xB87E, 0x0300,
+        0xce00, 0x6CAF, 0xB87C, 0x8301, 0xB87E, 0x1133, 0xB87C, 0x8105,
+        0xB87E, 0xa000, 0xB87C, 0x8148, 0xB87E, 0xa000, 0xa436, 0x81d8,
+        0xa438, 0x5865, 0xacf8, 0xCCC0, 0xac90, 0x52B0, 0xad2C, 0x8000,
+        0xB87C, 0x83e6, 0xB87E, 0x4A0E, 0xB87C, 0x83d2, 0xB87E, 0x0A0E,
+        0xB87C, 0x80a0, 0xB87E, 0xB8B6, 0xB87C, 0x805e, 0xB87E, 0xB8B6,
+        0xB87C, 0x8057, 0xB87E, 0x305A, 0xB87C, 0x8099, 0xB87E, 0x305A,
+        0xB87C, 0x8052, 0xB87E, 0x3333, 0xB87C, 0x8094, 0xB87E, 0x3333,
+        0xB87C, 0x807F, 0xB87E, 0x7975, 0xB87C, 0x803D, 0xB87E, 0x7975,
+        0xB87C, 0x8036, 0xB87E, 0x305A, 0xB87C, 0x8078, 0xB87E, 0x305A,
+        0xB87C, 0x8031, 0xB87E, 0x3335, 0xB87C, 0x8073, 0xB87E, 0x3335,
+        0xa436, 0x81D8, 0xa438, 0x5865, 0xB87C, 0x867c, 0xB87E, 0x0617,
+        0xad94, 0x0092, 0xB87C, 0x89B1, 0xB87E, 0x5050, 0xB87C, 0x86E0,
+        0xB87E, 0x809A, 0xB87C, 0x86E2, 0xB87E, 0xB34D, 0xB87C, 0x8FD2,
+        0xB87E, 0x004B, 0xB87C, 0x8691, 0xB87E, 0x007D, 0xB87E, 0x00AF,
+        0xB87E, 0x00E1, 0xB87E, 0x00FF, 0xB87C, 0x867F, 0xB87E, 0x0201,
+        0xB87E, 0x0201, 0xB87E, 0x0201, 0xB87E, 0x0201, 0xB87E, 0x0201,
+        0xB87E, 0x0201, 0xB87C, 0x86DA, 0xB87E, 0xCDCD, 0xB87E, 0xE6CD,
+        0xB87E, 0xCDCD, 0xB87C, 0x8FE8, 0xB87E, 0x0368, 0xB87E, 0x033F,
+        0xB87E, 0x1046, 0xB87E, 0x147D, 0xB87E, 0x147D, 0xB87E, 0x147D,
+        0xB87E, 0x0368, 0xB87E, 0x033F, 0xB87E, 0x1046, 0xB87E, 0x147D,
+        0xB87E, 0x147D, 0xB87E, 0x147D, 0xa436, 0x80dd, 0xa438, 0xf0AB,
+        0xa436, 0x80df, 0xa438, 0xC009, 0xa436, 0x80e7, 0xa438, 0x401E,
+        0xa436, 0x80e1, 0xa438, 0x120A, 0xa436, 0x86f2, 0xa438, 0x5094,
+        0xa436, 0x8701, 0xa438, 0x5094, 0xa436, 0x80f1, 0xa438, 0x30CC,
+        0xa436, 0x80f3, 0xa438, 0x0001, 0xa436, 0x80f5, 0xa438, 0x330B,
+        0xa436, 0x80f8, 0xa438, 0xCB76, 0xa436, 0x8105, 0xa438, 0xf0D3,
+        0xa436, 0x8107, 0xa438, 0x0002, 0xa436, 0x8109, 0xa438, 0xff0B,
+        0xa436, 0x810c, 0xa438, 0xC86D, 0xB87C, 0x8a32, 0xB87E, 0x0400,
+        0xa6f8, 0x0000, 0xa6f8, 0x0000, 0xa436, 0x81bc, 0xa438, 0x1300,
+        0xa846, 0x2410, 0xa86A, 0x0801, 0xa85C, 0x9680, 0xa436, 0x841D,
+        0xa438, 0x4A28, 0xa436, 0x8016, 0xa438, 0xBE05, 0xBF9C, 0x004A,
+        0xBF96, 0x41FA, 0xBF9A, 0xDC81, 0xa436, 0x8018, 0xa438, 0x0700,
+        0xa436, 0x8ff4, 0xa438, 0x01AE, 0xa436, 0x8fef, 0xa438, 0x0172,
+        0xa438, 0x00dc, 0xc842, 0x0002, 0xFFFF, 0xFFFF
+};
+
+static const u16 phy_mcu_ram_code_8126a_1_3[] = {
+        0xb892, 0x0000, 0xB88E, 0xC236, 0xB890, 0x1A1C, 0xB88E, 0xC238,
+        0xB890, 0x1C1C, 0xB890, 0x1C1C, 0xB890, 0x2D2D, 0xB890, 0x2D2D,
+        0xB890, 0x2D2A, 0xB890, 0x2A2A, 0xB890, 0x2A2A, 0xB890, 0x2A19,
+        0xB88E, 0xC272, 0xB890, 0x8484, 0xB890, 0x8484, 0xB890, 0x84B4,
+        0xB890, 0xB4B4, 0xB890, 0xB4B4, 0xB890, 0xF8F8, 0xB890, 0xF8F8,
+        0xB890, 0xF8F8, 0xB88E, 0xC000, 0xB890, 0x0303, 0xB890, 0x0405,
+        0xB890, 0x0608, 0xB890, 0x0A0B, 0xB890, 0x0E11, 0xB890, 0x1519,
+        0xB890, 0x2028, 0xB890, 0x3503, 0xB890, 0x0304, 0xB890, 0x0405,
+        0xB890, 0x0606, 0xB890, 0x0708, 0xB890, 0x090A, 0xB890, 0x0B0D,
+        0xB890, 0x0F11, 0xB890, 0x1315, 0xB890, 0x181A, 0xB890, 0x2029,
+        0xB890, 0x2F36, 0xB890, 0x3D43, 0xB890, 0x0101, 0xB890, 0x0102,
+        0xB890, 0x0202, 0xB890, 0x0303, 0xB890, 0x0405, 0xB890, 0x0607,
+        0xB890, 0x090A, 0xB890, 0x0C0E, 0xB88E, 0xC038, 0xB890, 0x6AE1,
+        0xB890, 0x8E6B, 0xB890, 0xA767, 0xB890, 0x01EF, 0xB890, 0x5A63,
+        0xB890, 0x2B99, 0xB890, 0x7F5D, 0xB890, 0x361F, 0xB890, 0xA127,
+        0xB890, 0xB558, 0xB890, 0x11C3, 0xB890, 0x7D85, 0xB890, 0xBAC5,
+        0xB890, 0xE691, 0xB890, 0x8F79, 0xB890, 0x3164, 0xB890, 0x3293,
+        0xB890, 0xB80D, 0xB890, 0xE2B7, 0xB890, 0x0D62, 0xB890, 0x4F85,
+        0xB890, 0xC919, 0xB890, 0x78F3, 0xB890, 0x77FF, 0xB890, 0xBD9E,
+        0xB890, 0x69D6, 0xB890, 0x6DA4, 0xB890, 0x0CC5, 0xB88E, 0xC1D2,
+        0xB890, 0x2425, 0xB890, 0x2627, 0xB890, 0x2829, 0xB890, 0x2A2B,
+        0xB890, 0x2C2D, 0xB890, 0x2E2F, 0xB890, 0x3031, 0xB890, 0x3233,
+        0xB890, 0x2323, 0xB890, 0x2424, 0xB890, 0x2525, 0xB890, 0x2626,
+        0xB890, 0x2727, 0xB890, 0x2828, 0xB890, 0x2929, 0xB890, 0x2A2A,
+        0xB890, 0x2B2C, 0xB890, 0x2C2D, 0xB890, 0x2D2E, 0xB890, 0x2E2F,
+        0xB890, 0x2F30, 0xB890, 0x1A1B, 0xB890, 0x1D1E, 0xB890, 0x1F20,
+        0xB890, 0x2123, 0xB890, 0x2425, 0xB890, 0x2628, 0xB890, 0x292A,
+        0xB890, 0x2B2C, 0xB890, 0x2E12, 0xB88E, 0xC09A, 0xB890, 0xD3D3,
+        0xB890, 0xD3D3, 0xB890, 0xD3D3, 0xB890, 0xD3D3, 0xB890, 0xD3D3,
+        0xB890, 0xD3D3, 0xB890, 0xD3D3, 0xB890, 0xD3D3, 0xFFFF, 0xFFFF
+};
+
 static void
 rtl8125_real_set_phy_mcu_8125b_1(struct net_device *dev)
 {
@@ -9265,6 +10247,57 @@ rtl8125_set_phy_mcu_8125b_2(struct net_device *dev)
 }
 
 static void
+rtl8125_real_set_phy_mcu_8126a_1_1(struct net_device *dev)
+{
+        rtl8125_set_phy_mcu_ram_code(dev,
+                                     phy_mcu_ram_code_8126a_1_1,
+                                     ARRAY_SIZE(phy_mcu_ram_code_8126a_1_1)
+                                    );
+}
+
+static void
+rtl8125_real_set_phy_mcu_8126a_1_2(struct net_device *dev)
+{
+        rtl8125_set_phy_mcu_ram_code(dev,
+                                     phy_mcu_ram_code_8126a_1_2,
+                                     ARRAY_SIZE(phy_mcu_ram_code_8126a_1_2)
+                                    );
+}
+
+static void
+rtl8125_real_set_phy_mcu_8126a_1_3(struct net_device *dev)
+{
+        rtl8125_set_phy_mcu_ram_code(dev,
+                                     phy_mcu_ram_code_8126a_1_3,
+                                     ARRAY_SIZE(phy_mcu_ram_code_8126a_1_3)
+                                    );
+}
+
+static void
+rtl8125_set_phy_mcu_8126a_1(struct net_device *dev)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        rtl8125_set_phy_mcu_patch_request(tp);
+
+        rtl8125_real_set_phy_mcu_8126a_1_1(dev);
+
+        rtl8125_clear_phy_mcu_patch_request(tp);
+
+        rtl8125_set_phy_mcu_patch_request(tp);
+
+        rtl8125_real_set_phy_mcu_8126a_1_2(dev);
+
+        rtl8125_clear_phy_mcu_patch_request(tp);
+
+        rtl8125_set_phy_mcu_patch_request(tp);
+
+        rtl8125_real_set_phy_mcu_8126a_1_3(dev);
+
+        rtl8125_clear_phy_mcu_patch_request(tp);
+}
+
+static void
 rtl8125_init_hw_phy_mcu(struct net_device *dev)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
@@ -9293,6 +10326,9 @@ rtl8125_init_hw_phy_mcu(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_7:
                 rtl8125_set_phy_mcu_8125b_2(dev);
+                break;
+        case CFG_METHOD_8:
+                rtl8125_set_phy_mcu_8126a_1(dev);
                 break;
         }
 
@@ -10200,6 +11236,22 @@ rtl8125_hw_phy_config_8125b_2(struct net_device *dev)
 }
 
 static void
+rtl8125_hw_phy_config_8126a_1(struct net_device *dev)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        SetEthPhyOcpBit(tp, 0xA442, BIT_11);
+
+        RTL_W16(tp, EEE_TXIDLE_TIMER_8125, tp->eee.tx_lpi_timer);
+
+        if (aspm) {
+                if (HW_HAS_WRITE_PHY_MCU_RAM_CODE(tp)) {
+                        rtl8125_enable_phy_aldps(tp);
+                }
+        }
+}
+
+static void
 rtl8125_hw_phy_config(struct net_device *dev)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
@@ -10233,6 +11285,9 @@ rtl8125_hw_phy_config(struct net_device *dev)
         case CFG_METHOD_7:
                 rtl8125_hw_phy_config_8125b_2(dev);
                 break;
+        case CFG_METHOD_8:
+                rtl8125_hw_phy_config_8126a_1(dev);
+                break;
         }
 
         //legacy force mode(Chap 22)
@@ -10243,6 +11298,7 @@ rtl8125_hw_phy_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
         default:
                 rtl8125_mdio_write(tp, 0x1F, 0x0A5B);
                 rtl8125_clear_eth_phy_bit(tp, 0x12, BIT_15);
@@ -10361,6 +11417,7 @@ rtl8125_get_bios_setting(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->bios_setting = RTL_R32(tp, TimeInt2);
                 break;
         }
@@ -10378,6 +11435,7 @@ rtl8125_set_bios_setting(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W32(tp, TimeInt2, tp->bios_setting);
                 break;
         }
@@ -10395,8 +11453,13 @@ rtl8125_setup_mqs_reg(struct rtl8125_private *tp)
         }
 
         for (i = 0; i < R8125_MAX_TX_QUEUES; i++) {
-                tp->tx_ring[i].hw_clo_ptr_reg = (u16)(HW_CLO_PTR0_8125 + i * 4);
-                tp->tx_ring[i].sw_tail_ptr_reg = (u16)(SW_TAIL_PTR0_8125 + i * 4);
+                if (tp->HwSuppTxNoCloseVer == 4) {
+                        tp->tx_ring[i].hw_clo_ptr_reg = (u16)(HW_CLO_PTR0_8126 + i * 4);
+                        tp->tx_ring[i].sw_tail_ptr_reg = (u16)(SW_TAIL_PTR0_8126 + i * 4);
+                } else {
+                        tp->tx_ring[i].hw_clo_ptr_reg = (u16)(HW_CLO_PTR0_8125 + i * 4);
+                        tp->tx_ring[i].sw_tail_ptr_reg = (u16)(SW_TAIL_PTR0_8125 + i * 4);
+                }
         }
 
         //rx
@@ -10445,6 +11508,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwPkgDet = rtl8125_mac_ocp_read(tp, 0xDC00);
                 tp->HwPkgDet = (tp->HwPkgDet >> 3) & 0x07;
                 break;
@@ -10460,6 +11524,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppNowIsOobVer = 1;
                 break;
         }
@@ -10471,6 +11536,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwPcieSNOffset = 0x16C;
                 break;
         }
@@ -10528,6 +11594,7 @@ rtl8125_init_software_variable(struct net_device *dev)
                 case CFG_METHOD_5:
                 case CFG_METHOD_6:
                 case CFG_METHOD_7:
+                case CFG_METHOD_8:
                         tp->org_pci_offset_99 = rtl8125_csi_fun0_read_byte(tp, 0x99);
                         tp->org_pci_offset_99 &= ~(BIT_5|BIT_6);
                         break;
@@ -10544,6 +11611,9 @@ rtl8125_init_software_variable(struct net_device *dev)
                 case CFG_METHOD_7:
                         tp->org_pci_offset_180 = rtl8125_csi_fun0_read_byte(tp, 0x214);
                         break;
+                case CFG_METHOD_8:
+                        tp->org_pci_offset_180 = rtl8125_csi_fun0_read_byte(tp, 0x22c);
+                        break;
                 }
         }
 
@@ -10557,8 +11627,24 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
         default:
                 tp->use_timer_interrrupt = TRUE;
+                break;
+        }
+
+        switch (tp->mcfg) {
+        case CFG_METHOD_2:
+        case CFG_METHOD_3:
+        case CFG_METHOD_4:
+        case CFG_METHOD_5:
+                tp->HwSuppMaxPhyLinkSpeed = 2500;
+                break;
+        case CFG_METHOD_8:
+                tp->HwSuppMaxPhyLinkSpeed = 5000;
+                break;
+        default:
+                tp->HwSuppMaxPhyLinkSpeed = 1000;
                 break;
         }
 
@@ -10572,6 +11658,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppMagicPktVer = WAKEUP_MAGIC_PACKET_V3;
                 break;
         default:
@@ -10586,6 +11673,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppLinkChgWakeUpVer = 3;
                 break;
         }
@@ -10596,6 +11684,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppD0SpeedUpVer = 1;
                 break;
         }
@@ -10607,6 +11696,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppCheckPhyDisableModeVer = 3;
                 break;
         }
@@ -10620,7 +11710,17 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_7:
                 tp->HwSuppTxNoCloseVer = 3;
                 break;
+        case CFG_METHOD_8:
+                tp->HwSuppTxNoCloseVer = 4;
+                break;
         }
+
+        if (tp->HwSuppTxNoCloseVer == 4)
+                tp->MaxTxDescPtrMask = MAX_TX_NO_CLOSE_DESC_PTR_MASK_V3;
+        else if (tp->HwSuppTxNoCloseVer == 3)
+                tp->MaxTxDescPtrMask = MAX_TX_NO_CLOSE_DESC_PTR_MASK_V2;
+        else
+                tx_no_close_enable = 0;
 
         if (tp->HwSuppTxNoCloseVer > 0 && tx_no_close_enable == 1)
                 tp->EnableTxNoClose = TRUE;
@@ -10648,6 +11748,9 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_7:
                 tp->sw_ram_code_ver = NIC_RAMCODE_VERSION_CFG_METHOD_5;
                 break;
+        case CFG_METHOD_8:
+                tp->sw_ram_code_ver = NIC_RAMCODE_VERSION_CFG_METHOD_8;
+                break;
         }
 
         if (tp->HwIcVerUnknown) {
@@ -10671,6 +11774,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppMacMcuVer = 2;
                 break;
         }
@@ -10682,6 +11786,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->MacMcuPageSize = RTL8125_MAC_MCU_PAGE_SIZE;
                 break;
         }
@@ -10690,6 +11795,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppNumTxQueues = 2;
                 tp->HwSuppNumRxQueues = 4;
                 break;
@@ -10710,6 +11816,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppRssVer = 5;
                 tp->HwSuppIndirTblEntries = 128;
                 break;
@@ -10756,6 +11863,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppIsrVer = 2;
                 break;
         default:
@@ -10805,6 +11913,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppIntMitiVer = 4;
                 break;
         }
@@ -10816,6 +11925,7 @@ rtl8125_init_software_variable(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->HwSuppExtendTallyCounterVer = 1;
                 break;
         }
@@ -10852,15 +11962,17 @@ rtl8125_init_software_variable(struct net_device *dev)
         tp->wol_opts = rtl8125_get_hw_wol(tp);
         tp->wol_enabled = (tp->wol_opts) ? WOL_ENABLED : WOL_DISABLED;
 
-        if (tp->mcfg == CFG_METHOD_6 || tp->mcfg == CFG_METHOD_7)
-                rtl8125_link_option_giga((u8*)&autoneg_mode, (u32*)&speed_mode, (u8*)&duplex_mode, (u32*)&advertising_mode);
-        else
+        if (HW_SUPP_PHY_LINK_SPEED_2500M(tp))
                 rtl8125_link_option((u8*)&autoneg_mode, (u32*)&speed_mode, (u8*)&duplex_mode, (u32*)&advertising_mode);
+        else
+                rtl8125_link_option_giga((u8*)&autoneg_mode, (u32*)&speed_mode, (u8*)&duplex_mode, (u32*)&advertising_mode);
 
         tp->autoneg = autoneg_mode;
         tp->speed = speed_mode;
         tp->duplex = duplex_mode;
         tp->advertising = advertising_mode;
+        if (HW_SUPP_PHY_LINK_SPEED_5000M(tp))
+                tp->advertising |= RTK_ADVERTISED_5000baseX_Full;
         tp->fcpause = rtl8125_fc_full;
 
         tp->max_jumbo_frame_size = rtl_chip_info[tp->chipset].jumbo_frame_sz;
@@ -10879,6 +11991,7 @@ rtl8125_init_software_variable(struct net_device *dev)
                 switch (tp->mcfg) {
                 case CFG_METHOD_4:
                 case CFG_METHOD_5:
+                case CFG_METHOD_8:
                         eee->supported |= SUPPORTED_2500baseX_Full;
                         break;
                 }
@@ -10948,7 +12061,8 @@ rtl8125_get_mac_address(struct net_device *dev)
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7) {
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 *(u32*)&mac_addr[0] = RTL_R32(tp, BACKUP_ADDR0_8125);
                 *(u16*)&mac_addr[4] = RTL_R16(tp, BACKUP_ADDR1_8125);
         }
@@ -11848,6 +12962,7 @@ rtl8125_phy_power_up(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_wait_phy_ups_resume(dev, 3);
                 break;
         };
@@ -12170,8 +13285,8 @@ rtl8125_esd_checker(struct rtl8125_private *tp)
 
         if (tp->esd_flag != 0) {
                 printk(KERN_ERR "%s: esd_flag = 0x%04x\n.\n", dev->name, tp->esd_flag);
-                netif_tx_stop_all_queues(dev);
                 netif_carrier_off(dev);
+                netif_tx_disable(dev);
                 rtl8125_hw_reset(dev);
                 rtl8125_tx_clear(tp);
                 rtl8125_rx_clear(tp);
@@ -12293,6 +13408,7 @@ static int rtl8125_try_msi(struct rtl8125_private *tp)
         case CFG_METHOD_4:
         case CFG_METHOD_5:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 tp->max_irq_nvecs = R8125_MAX_MSIX_VEC_8125B;
                 tp->min_irq_nvecs = R8125_MIN_MSIX_VEC_8125B;
                 break;
@@ -12347,11 +13463,57 @@ static int rtl8125_get_irq(struct pci_dev *pdev)
 #endif
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+static void
+rtl8125_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+        struct rtl8125_counters *counters = tp->tally_vaddr;
+        dma_addr_t paddr = tp->tally_paddr;
+
+        if (!counters)
+                return;
+
+        netdev_stats_to_stats64(stats, &dev->stats);
+        dev_fetch_sw_netstats(stats, dev->tstats);
+
+        /*
+         * Fetch additional counter values missing in stats collected by driver
+         * from tally counters.
+         */
+        rtl8125_dump_tally_counter(tp, paddr);
+
+        stats->tx_errors = le64_to_cpu(counters->tx_errors);
+        stats->collisions = le32_to_cpu(counters->tx_multi_collision);
+        stats->tx_aborted_errors = le16_to_cpu(counters->tx_aborted) ;
+        stats->rx_missed_errors = le16_to_cpu(counters->rx_missed);
+}
+#else
+/**
+ *  rtl8125_get_stats - Get rtl8125 read/write statistics
+ *  @dev: The Ethernet Device to get statistics for
+ *
+ *  Get TX/RX statistics for rtl8125
+ */
+static struct
+net_device_stats *rtl8125_get_stats(struct net_device *dev)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
+        struct rtl8125_private *tp = netdev_priv(dev);
+#endif
+        return &RTLDEV->stats;
+}
+#endif //LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
 static const struct net_device_ops rtl8125_netdev_ops = {
         .ndo_open       = rtl8125_open,
         .ndo_stop       = rtl8125_close,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+        .ndo_get_stats64    = rtl8125_get_stats64,
+#else
         .ndo_get_stats      = rtl8125_get_stats,
+#endif //LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
         .ndo_start_xmit     = rtl8125_start_xmit,
         .ndo_tx_timeout     = rtl8125_tx_timeout,
         .ndo_change_mtu     = rtl8125_change_mtu,
@@ -12669,6 +13831,13 @@ rtl8125_init_one(struct pci_dev *pdev,
         tp->phy_reset_pending = rtl8125_xmii_reset_pending;
         tp->link_ok = rtl8125_xmii_link_ok;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+        dev->tstats = devm_netdev_alloc_pcpu_stats(&pdev->dev,
+                        struct pcpu_sw_netstats);
+        if (!dev->tstats)
+                goto err_out_1;
+#endif //LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+
         rc = rtl8125_try_msi(tp);
         if (rc < 0) {
                 dev_err(&pdev->dev, "Can't allocate interrupt\n");
@@ -12842,7 +14011,7 @@ rtl8125_remove_one(struct pci_dev *pdev)
 #ifdef  CONFIG_R8125_NAPI
         rtl8125_del_napi(tp);
 #endif
-        if (tp->DASH)
+        if (HW_DASH_SUPPORT_DASH(tp))
                 rtl8125_driver_stop(tp);
 
         unregister_netdev(dev);
@@ -12864,13 +14033,31 @@ rtl8125_remove_one(struct pci_dev *pdev)
         pci_set_drvdata(pdev, NULL);
 }
 
+#ifdef ENABLE_PAGE_REUSE
+static inline unsigned int rtl8125_rx_page_order(unsigned rx_buf_sz, unsigned page_size)
+{
+        unsigned truesize = SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) +
+                            SKB_DATA_ALIGN(rx_buf_sz + R8125_RX_ALIGN);
+
+        return get_order(truesize * 2);
+}
+#endif //ENABLE_PAGE_REUSE
+
 static void
 rtl8125_set_rxbufsize(struct rtl8125_private *tp,
                       struct net_device *dev)
 {
         unsigned int mtu = dev->mtu;
 
-        tp->rx_buf_sz = (mtu > ETH_DATA_LEN) ? mtu + ETH_HLEN + 8 + 1 : RX_BUF_SIZE;
+        tp->rms = (mtu > ETH_DATA_LEN) ? mtu + ETH_HLEN + 8 + 1 : RX_BUF_SIZE;
+        tp->rx_buf_sz = tp->rms;
+#ifdef ENABLE_RX_PACKET_FRAGMENT
+        tp->rx_buf_sz =  SKB_DATA_ALIGN(RX_BUF_SIZE);
+#endif //ENABLE_RX_PACKET_FRAGMENT
+#ifdef ENABLE_PAGE_REUSE
+        tp->rx_buf_page_order = rtl8125_rx_page_order(tp->rx_buf_sz, PAGE_SIZE);
+        tp->rx_buf_page_size = rtl8125_rx_page_size(tp->rx_buf_page_order);
+#endif //ENABLE_PAGE_REUSE
 }
 
 static void rtl8125_free_irq(struct rtl8125_private *tp)
@@ -13334,6 +14521,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 RTL_W8(tp, 0xF1, RTL_R8(tp, 0xF1) & ~BIT_7);
                 RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~BIT_7);
                 RTL_W8(tp, Config5, RTL_R8(tp, Config5) & ~BIT_0);
@@ -13360,6 +14548,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 mac_ocp_data = rtl8125_mac_ocp_read(tp, 0xC0B6);
                 mac_ocp_data &= BIT_0;
                 rtl8125_mac_ocp_write(tp, 0xC0B6, mac_ocp_data);
@@ -13379,12 +14568,18 @@ rtl8125_hw_config(struct net_device *dev)
         if (tp->EnableTxNoClose)
                 RTL_W32(tp, TxConfig, (RTL_R32(tp, TxConfig) | BIT_6));
 
+        if (enable_double_vlan)
+                rtl8125_enable_double_vlan(tp);
+        else
+                rtl8125_disable_double_vlan(tp);
+
         if (tp->mcfg == CFG_METHOD_2 ||
             tp->mcfg == CFG_METHOD_3 ||
             tp->mcfg == CFG_METHOD_4 ||
             tp->mcfg == CFG_METHOD_5 ||
             tp->mcfg == CFG_METHOD_6 ||
-            tp->mcfg == CFG_METHOD_7) {
+            tp->mcfg == CFG_METHOD_7 ||
+            tp->mcfg == CFG_METHOD_8) {
                 set_offset70F(tp, 0x27);
                 set_offset79(tp, 0x50);
 
@@ -13412,6 +14607,8 @@ rtl8125_hw_config(struct net_device *dev)
                 if (tp->mcfg == CFG_METHOD_4 || tp->mcfg == CFG_METHOD_5 ||
                     tp->mcfg == CFG_METHOD_7)
                         mac_ocp_data |= ((2 & 0x07) << 8);
+                else if (tp->mcfg == CFG_METHOD_8)
+                        mac_ocp_data |= ((4 & 0x07) << 8);
                 else
                         mac_ocp_data |= ((3 & 0x07) << 8);
                 rtl8125_mac_ocp_write(tp, 0xE614, mac_ocp_data);
@@ -13421,7 +14618,7 @@ rtl8125_hw_config(struct net_device *dev)
                 mac_ocp_data = rtl8125_mac_ocp_read(tp, 0xE63E);
                 mac_ocp_data &= ~(BIT_5 | BIT_4);
                 if (tp->mcfg == CFG_METHOD_2 || tp->mcfg == CFG_METHOD_3 ||
-                    tp->mcfg == CFG_METHOD_6)
+                    tp->mcfg == CFG_METHOD_6 || tp->mcfg == CFG_METHOD_8)
                         mac_ocp_data |= ((0x02 & 0x03) << 4);
                 rtl8125_mac_ocp_write(tp, 0xE63E, mac_ocp_data);
 
@@ -13534,6 +14731,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_mac_ocp_write(tp, 0xE098, 0xC302);
                 break;
         }
@@ -13545,6 +14743,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_disable_pci_offset_99(tp);
                 if (aspm) {
                         if (tp->org_pci_offset_99 & (BIT_2 | BIT_5 | BIT_6))
@@ -13559,6 +14758,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 rtl8125_disable_pci_offset_180(tp);
                 if (aspm) {
                         if (tp->org_pci_offset_180 & (BIT_0|BIT_1))
@@ -13594,7 +14794,7 @@ rtl8125_hw_config(struct net_device *dev)
         break;
         }
 
-        RTL_W16(tp, RxMaxSize, tp->rx_buf_sz);
+        RTL_W16(tp, RxMaxSize, tp->rms);
 
         rtl8125_disable_rxdvgate(dev);
 
@@ -13636,6 +14836,7 @@ rtl8125_hw_config(struct net_device *dev)
         case CFG_METHOD_5:
         case CFG_METHOD_6:
         case CFG_METHOD_7:
+        case CFG_METHOD_8:
                 if (aspm) {
                         RTL_W8(tp, Config5, RTL_R8(tp, Config5) | BIT_0);
                         RTL_W8(tp, Config2, RTL_R8(tp, Config2) | BIT_7);
@@ -13699,8 +14900,8 @@ rtl8125_change_mtu(struct net_device *dev,
         rtl8125_enable_napi(tp);
 #endif//CONFIG_R8125_NAPI
 
-        //netif_tx_stop_all_queues(dev);
         //netif_carrier_off(dev);
+        //netif_tx_disable(dev);
         rtl8125_hw_config(dev);
         rtl8125_enable_hw_linkchg_interrupt(tp);
 
@@ -13715,22 +14916,6 @@ out:
 
 err_out:
         return ret;
-}
-
-static void
-rtl8125_free_rx_skb(struct rtl8125_private *tp,
-                    struct rtl8125_rx_ring *ring,
-                    struct sk_buff **sk_buff,
-                    struct RxDesc *desc,
-                    const u32 cur_rx)
-{
-        struct pci_dev *pdev = tp->pci_dev;
-
-        dma_unmap_single(&pdev->dev, ring->RxDescPhyAddr[cur_rx], tp->rx_buf_sz,
-                         DMA_FROM_DEVICE);
-        dev_kfree_skb(*sk_buff);
-        *sk_buff = NULL;
-        rtl8125_make_unusable_by_asic(tp, desc);
 }
 
 static inline void
@@ -13773,6 +14958,125 @@ rtl8125_map_to_asic(struct rtl8125_private *tp,
         rtl8125_mark_to_asic(tp, desc, rx_buf_sz);
 }
 
+#ifdef ENABLE_PAGE_REUSE
+
+static int
+rtl8125_alloc_rx_page(struct rtl8125_private *tp, struct rtl8125_rx_ring *ring,
+                      struct rtl8125_rx_buffer *rxb)
+{
+        struct page *page;
+        dma_addr_t dma;
+        unsigned int order = tp->rx_buf_page_order;
+
+        //get free page
+        page = dev_alloc_pages(order);
+
+        if (unlikely(!page))
+                return -ENOMEM;
+
+        dma = dma_map_page_attrs(&tp->pci_dev->dev, page, 0,
+                                 tp->rx_buf_page_size,
+                                 DMA_FROM_DEVICE,
+                                 (DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING));
+
+        if (unlikely(dma_mapping_error(&tp->pci_dev->dev, dma))) {
+                __free_pages(page, order);
+                return -ENOMEM;
+        }
+
+        rxb->page = page;
+        rxb->data = page_address(page);
+        rxb->page_offset = ring->rx_offset;
+        rxb->dma = dma;
+
+        //after page alloc, page refcount already = 1
+
+        return 0;
+}
+
+static void
+rtl8125_free_rx_page(struct rtl8125_private *tp, struct rtl8125_rx_buffer *rxb)
+{
+        if (!rxb->page)
+                return;
+
+        dma_unmap_page_attrs(&tp->pci_dev->dev, rxb->dma,
+                             tp->rx_buf_page_size,
+                             DMA_FROM_DEVICE,
+                             (DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING));
+        __free_pages(rxb->page, tp->rx_buf_page_order);
+        rxb->page = NULL;
+}
+
+static void
+_rtl8125_rx_clear(struct rtl8125_private *tp, struct rtl8125_rx_ring *ring)
+{
+        int i;
+        struct rtl8125_rx_buffer *rxb;
+
+        for (i = 0; i < ring->num_rx_desc; i++) {
+                rxb = &ring->rx_buffer[i];
+                if (rxb->skb) {
+                        dev_kfree_skb(rxb->skb);
+                        rxb->skb = NULL;
+                }
+                rtl8125_free_rx_page(tp, rxb);
+        }
+}
+
+static u32
+rtl8125_rx_fill(struct rtl8125_private *tp,
+                struct rtl8125_rx_ring *ring,
+                struct net_device *dev,
+                u32 start,
+                u32 end,
+                u8 in_intr)
+{
+        u32 cur;
+        struct rtl8125_rx_buffer *rxb;
+
+        for (cur = start; end - cur > 0; cur++) {
+                int ret, i = cur % ring->num_rx_desc;
+
+                rxb = &ring->rx_buffer[i];
+                if (rxb->page)
+                        continue;
+
+                ret = rtl8125_alloc_rx_page(tp, ring, rxb);
+                if (ret)
+                        break;
+
+                dma_sync_single_range_for_device(tp_to_dev(tp),
+                                                 rxb->dma,
+                                                 rxb->page_offset,
+                                                 tp->rx_buf_sz,
+                                                 DMA_FROM_DEVICE);
+
+                rtl8125_map_to_asic(tp, ring, ring->RxDescArray + i,
+                                    rxb->dma + rxb->page_offset,
+                                    tp->rx_buf_sz, i);
+        }
+        return cur - start;
+}
+
+#else //ENABLE_PAGE_REUSE
+
+static void
+rtl8125_free_rx_skb(struct rtl8125_private *tp,
+                    struct rtl8125_rx_ring *ring,
+                    struct sk_buff **sk_buff,
+                    struct RxDesc *desc,
+                    const u32 cur_rx)
+{
+        struct pci_dev *pdev = tp->pci_dev;
+
+        dma_unmap_single(&pdev->dev, ring->RxDescPhyAddr[cur_rx], tp->rx_buf_sz,
+                         DMA_FROM_DEVICE);
+        dev_kfree_skb(*sk_buff);
+        *sk_buff = NULL;
+        rtl8125_make_unusable_by_asic(tp, desc);
+}
+
 static int
 rtl8125_alloc_rx_skb(struct rtl8125_private *tp,
                      struct rtl8125_rx_ring *ring,
@@ -13787,14 +15091,14 @@ rtl8125_alloc_rx_skb(struct rtl8125_private *tp,
         int ret = 0;
 
         if (in_intr)
-                skb = RTL_ALLOC_SKB_INTR(&tp->r8125napi[ring->index].napi, rx_buf_sz + RTK_RX_ALIGN);
+                skb = RTL_ALLOC_SKB_INTR(&tp->r8125napi[ring->index].napi, rx_buf_sz + R8125_RX_ALIGN);
         else
-                skb = dev_alloc_skb(rx_buf_sz + RTK_RX_ALIGN);
+                skb = dev_alloc_skb(rx_buf_sz + R8125_RX_ALIGN);
 
         if (unlikely(!skb))
                 goto err_out;
 
-        skb_reserve(skb, RTK_RX_ALIGN);
+        skb_reserve(skb, R8125_RX_ALIGN);
 
         mapping = dma_map_single(tp_to_dev(tp), skb->data, rx_buf_sz,
                                  DMA_FROM_DEVICE);
@@ -13834,15 +15138,6 @@ _rtl8125_rx_clear(struct rtl8125_private *tp, struct rtl8125_rx_ring *ring)
         }
 }
 
-void
-rtl8125_rx_clear(struct rtl8125_private *tp)
-{
-        int i;
-
-        for (i = 0; i < tp->num_rx_rings; i++)
-                _rtl8125_rx_clear(tp, &tp->rx_ring[i]);
-}
-
 static u32
 rtl8125_rx_fill(struct rtl8125_private *tp,
                 struct rtl8125_rx_ring *ring,
@@ -13871,6 +15166,20 @@ rtl8125_rx_fill(struct rtl8125_private *tp,
                         break;
         }
         return cur - start;
+}
+
+#endif //ENABLE_PAGE_REUSE
+
+void
+rtl8125_rx_clear(struct rtl8125_private *tp)
+{
+        int i;
+
+        for (i = 0; i < tp->num_rx_rings; i++) {
+                struct rtl8125_rx_ring *ring = &tp->rx_ring[i];
+
+                _rtl8125_rx_clear(tp, ring);
+        }
 }
 
 static inline void
@@ -13949,8 +15258,11 @@ rtl8125_init_ring(struct net_device *dev)
 
         for (i = 0; i < tp->num_rx_rings; i++) {
                 struct rtl8125_rx_ring *ring = &tp->rx_ring[i];
-
+#ifdef ENABLE_PAGE_REUSE
+                ring->rx_offset = R8125_RX_ALIGN;
+#else
                 memset(ring->Rx_skbuff, 0x0, sizeof(ring->Rx_skbuff));
+#endif //ENABLE_PAGE_REUSE
                 if (rtl8125_rx_fill(tp, ring, dev, 0, ring->num_rx_desc, 0) != ring->num_rx_desc)
                         goto err_out;
 
@@ -14204,8 +15516,8 @@ static void rtl8125_reset_task(struct work_struct *work)
 #endif	//LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
         }
 
-        netif_tx_stop_all_queues(dev);
         netif_carrier_off(dev);
+        netif_tx_disable(dev);
         rtl8125_hw_reset(dev);
 
         rtl8125_tx_clear(tp);
@@ -14716,6 +16028,12 @@ static bool rtl8125_tx_slots_avail(struct rtl8125_private *tp,
         return slots_avail > MAX_SKB_FRAGS;
 }
 
+static inline u32
+rtl8125_fast_mod_mask(const u32 input, const u32 mask)
+{
+        return input > mask ? input & mask : input;
+}
+
 static netdev_tx_t
 rtl8125_start_xmit(struct sk_buff *skb,
                    struct net_device *dev)
@@ -14829,9 +16147,12 @@ rtl8125_start_xmit(struct sk_buff *skb,
                 netif_stop_subqueue(dev, queue_mapping);
         }
 
-        if (EnableTxNoClose)
-                RTL_W16(tp, ring->sw_tail_ptr_reg, ring->cur_tx % MAX_TX_NO_CLOSE_DESC_PTR_V2);
-        else
+        if (EnableTxNoClose) {
+                if (tp->HwSuppTxNoCloseVer == 4)
+                        RTL_W32(tp, ring->sw_tail_ptr_reg, ring->cur_tx);
+                else
+                        RTL_W16(tp, ring->sw_tail_ptr_reg, ring->cur_tx);
+        } else
                 RTL_W16(tp, TPPOLL_8125, BIT(ring->index));    /* set polling bit */
 
         if (unlikely(stop_queue)) {
@@ -14863,10 +16184,22 @@ err_stop:
         goto out;
 }
 
-static inline u32
-rtl8125_fast_mod(const u32 input, const u32 ceil)
+static u32
+rtl8125_get_hw_clo_ptr(struct rtl8125_tx_ring *ring)
 {
-        return input >= ceil ? input % ceil : input;
+        struct rtl8125_private *tp = ring->priv;
+
+        switch (tp->HwSuppTxNoCloseVer) {
+        case 3:
+                return RTL_R16(tp, ring->hw_clo_ptr_reg);
+        case 4:
+                return RTL_R32(tp, ring->hw_clo_ptr_reg);
+        default:
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
+                WARN_ON(1);
+#endif
+                return 0;
+        }
 }
 
 static int
@@ -14883,10 +16216,10 @@ rtl8125_tx_interrupt(struct rtl8125_tx_ring *ring, int budget)
         tx_left = READ_ONCE(ring->cur_tx) - dirty_tx;
         if (EnableTxNoClose) {
                 unsigned int tx_desc_closed;
-                u32 NextHwDesCloPtr = RTL_R16(tp, ring->hw_clo_ptr_reg);
+                u32 NextHwDesCloPtr = rtl8125_get_hw_clo_ptr(ring);
                 ring->NextHwDesCloPtr = NextHwDesCloPtr;
                 smp_rmb();
-                tx_desc_closed = rtl8125_fast_mod(NextHwDesCloPtr - ring->BeginHwDesCloPtr, MAX_TX_NO_CLOSE_DESC_PTR_V2);
+                tx_desc_closed = rtl8125_fast_mod_mask(NextHwDesCloPtr - ring->BeginHwDesCloPtr, tp->MaxTxDescPtrMask);
                 if(tx_left > tx_desc_closed) tx_left = tx_desc_closed;
                 ring->BeginHwDesCloPtr = NextHwDesCloPtr;
         }
@@ -14958,6 +16291,15 @@ rtl8125_fragmented_frame(struct rtl8125_private *tp, u32 status)
 }
 
 static inline int
+rtl8125_is_non_eop(struct rtl8125_private *tp, u32 status)
+{
+        if (tp->InitRxDescType == RX_DESC_RING_TYPE_3)
+                return !(status & LastFrag_V3);
+        else
+                return !(status & LastFrag);
+}
+
+static inline int
 rtl8125_rx_desc_type(u32 status)
 {
         return ((status >> 26) & 0x0F);
@@ -14968,43 +16310,35 @@ rtl8125_rx_v3_csum(struct rtl8125_private *tp,
                    struct sk_buff *skb,
                    struct RxDescV3 *descv3)
 {
-        //u32 opts1 = le32_to_cpu(descv3->RxDescNormalDDWord4.opts1);
         u32 opts2 = le32_to_cpu(descv3->RxDescNormalDDWord4.opts2);
 
         /* rx csum offload for RTL8125 */
-        if (((opts2 & RxV4F_v3) && !(opts2 & RxIPF_v3)) || (opts2 & RxV6F_v3)) {
-                if (((opts2 & RxTCPT_v3) && !(opts2 & RxTCPF_v3)) ||
-                    ((opts2 & RxUDPT_v3) && !(opts2 & RxUDPF_v3)))
-                        skb->ip_summed = CHECKSUM_UNNECESSARY;
-                else
-                        skb->ip_summed = CHECKSUM_NONE;
-        } else
-                skb->ip_summed = CHECKSUM_NONE;
+        if (((opts2 & RxTCPT_v3) && !(opts2 & RxTCPF_v3)) ||
+            ((opts2 & RxUDPT_v3) && !(opts2 & RxUDPF_v3)))
+                skb->ip_summed = CHECKSUM_UNNECESSARY;
+        else
+                skb_checksum_none_assert(skb);
 }
 
 static inline void
 rtl8125_rx_csum(struct rtl8125_private *tp,
                 struct sk_buff *skb,
-                struct RxDesc *desc)
+                struct RxDesc *desc,
+                u32 opts1)
 {
         if (tp->InitRxDescType == RX_DESC_RING_TYPE_3)
                 rtl8125_rx_v3_csum(tp, skb, (struct RxDescV3 *)desc);
         else {
-                u32 opts1 = le32_to_cpu(rtl8125_rx_desc_opts1(tp, desc));
-                u32 opts2 = le32_to_cpu(rtl8125_rx_desc_opts2(tp, desc));
-
                 /* rx csum offload for RTL8125 */
-                if (((opts2 & RxV4F) && !(opts1 & RxIPF)) || (opts2 & RxV6F)) {
-                        if (((opts1 & RxTCPT) && !(opts1 & RxTCPF)) ||
-                            ((opts1 & RxUDPT) && !(opts1 & RxUDPF)))
-                                skb->ip_summed = CHECKSUM_UNNECESSARY;
-                        else
-                                skb->ip_summed = CHECKSUM_NONE;
-                } else
-                        skb->ip_summed = CHECKSUM_NONE;
+                if (((opts1 & RxTCPT) && !(opts1 & RxTCPF)) ||
+                    ((opts1 & RxUDPT) && !(opts1 & RxUDPF)))
+                        skb->ip_summed = CHECKSUM_UNNECESSARY;
+                else
+                        skb_checksum_none_assert(skb);
         }
 }
 
+/*
 static inline int
 rtl8125_try_rx_copy(struct rtl8125_private *tp,
                     struct rtl8125_rx_ring *ring,
@@ -15015,26 +16349,26 @@ rtl8125_try_rx_copy(struct rtl8125_private *tp,
 {
         int ret = -1;
 
-        if (pkt_size < rx_copybreak) {
-                struct sk_buff *skb;
+        struct sk_buff *skb;
 
-                skb = RTL_ALLOC_SKB_INTR(&tp->r8125napi[ring->index].napi, pkt_size + RTK_RX_ALIGN);
-                if (skb) {
-                        u8 *data;
+        skb = RTL_ALLOC_SKB_INTR(&tp->r8125napi[ring->index].napi, pkt_size + R8125_RX_ALIGN);
+        if (skb) {
+                u8 *data;
 
-                        data = sk_buff[0]->data;
-                        skb_reserve(skb, RTK_RX_ALIGN);
+                data = sk_buff[0]->data;
+                skb_reserve(skb, R8125_RX_ALIGN);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,37)
-                        prefetch(data - RTK_RX_ALIGN);
+                prefetch(data - R8125_RX_ALIGN);
 #endif
-                        eth_copy_and_sum(skb, data, pkt_size, 0);
-                        *sk_buff = skb;
-                        rtl8125_mark_to_asic(tp, desc, rx_buf_sz);
-                        ret = 0;
-                }
+                eth_copy_and_sum(skb, data, pkt_size, 0);
+                *sk_buff = skb;
+                rtl8125_mark_to_asic(tp, desc, rx_buf_sz);
+                ret = 0;
         }
+
         return ret;
 }
+*/
 
 static inline void
 rtl8125_rx_skb(struct rtl8125_private *tp,
@@ -15082,6 +16416,95 @@ rtl8125_check_rx_desc_error(struct net_device *dev,
         return ret;
 }
 
+#ifdef ENABLE_PAGE_REUSE
+
+static inline bool
+rtl8125_reuse_rx_ok(struct page *page)
+{
+        /* avoid re-using remote pages */
+        if (!dev_page_is_reusable(page)) {
+                //printk(KERN_INFO "r8125 page pfmemalloc, can't reuse!\n");
+                return false;
+        }
+        /* if we are only owner of page we can reuse it */
+        if (unlikely(page_ref_count(page) != 1)) {
+                //printk(KERN_INFO "r8125 page refcnt %d, can't reuse!\n", page_ref_count(page));
+                return false;
+        }
+
+        return true;
+}
+
+static void
+rtl8125_reuse_rx_buffer(struct rtl8125_private *tp, struct rtl8125_rx_ring *ring, u32 cur_rx, struct rtl8125_rx_buffer *rxb)
+{
+        struct page *page = rxb->page;
+
+        u32 dirty_rx = ring->dirty_rx;
+        u32 entry = dirty_rx % ring->num_rx_desc;
+        struct rtl8125_rx_buffer *nrxb = &ring->rx_buffer[entry];
+
+        u32 noffset;
+
+        //the page gonna be shared by us and kernel, keep page ref = 2
+        page_ref_inc(page);
+
+        //flip the buffer in page to use next
+        noffset = rxb->page_offset ^ (tp->rx_buf_page_size / 2); //one page, two buffer, ping-pong
+
+        nrxb->dma = rxb->dma;
+        nrxb->page_offset = noffset;
+        nrxb->data = rxb->data;
+
+        if (cur_rx != dirty_rx) {
+                //move the buffer to other slot
+                nrxb->page = page;
+                rxb->page = NULL;
+        }
+}
+
+static void rtl8125_put_rx_buffer(struct rtl8125_private *tp,
+                                  struct rtl8125_rx_ring *ring,
+                                  u32 cur_rx,
+                                  struct rtl8125_rx_buffer *rxb)
+{
+        struct rtl8125_rx_buffer *nrxb;
+        struct page *page = rxb->page;
+        u32 entry;
+
+        entry = ring->dirty_rx % ring->num_rx_desc;
+        nrxb = &ring->rx_buffer[entry];
+        if (likely(rtl8125_reuse_rx_ok(page))) {
+                /* hand second half of page back to the ring */
+                rtl8125_reuse_rx_buffer(tp, ring, cur_rx, rxb);
+        } else {
+                tp->page_reuse_fail_cnt++;
+
+                dma_unmap_page_attrs(&tp->pci_dev->dev, rxb->dma,
+                                     tp->rx_buf_page_size,
+                                     DMA_FROM_DEVICE,
+                                     (DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING));
+                //the page ref is kept 1, uniquely owned by kernel now
+                rxb->page = NULL;
+
+                return;
+        }
+
+        dma_sync_single_range_for_device(tp_to_dev(tp),
+                                         nrxb->dma,
+                                         nrxb->page_offset,
+                                         tp->rx_buf_sz,
+                                         DMA_FROM_DEVICE);
+
+        rtl8125_map_to_asic(tp, ring, ring->RxDescArray + entry,
+                            nrxb->dma + nrxb->page_offset,
+                            tp->rx_buf_sz, entry);
+
+        ring->dirty_rx++;
+}
+
+#endif //ENABLE_PAGE_REUSE
+
 static int
 rtl8125_rx_interrupt(struct net_device *dev,
                      struct rtl8125_private *tp,
@@ -15092,10 +16515,17 @@ rtl8125_rx_interrupt(struct net_device *dev,
         unsigned int delta, count = 0;
         unsigned int entry;
         struct RxDesc *desc;
+        struct sk_buff *skb;
         u32 status;
         u32 rx_quota;
-        u64 rx_buf_phy_addr;
         u32 ring_index = ring->index;
+#ifdef ENABLE_PAGE_REUSE
+        struct rtl8125_rx_buffer *rxb;
+#else //ENABLE_PAGE_REUSE
+        u64 rx_buf_phy_addr;
+#endif //ENABLE_PAGE_REUSE
+        unsigned int total_rx_multicast_packets = 0;
+        unsigned int total_rx_bytes = 0, total_rx_packets = 0;
 
         assert(dev != NULL);
         assert(tp != NULL);
@@ -15105,13 +16535,19 @@ rtl8125_rx_interrupt(struct net_device *dev,
 
         rx_quota = RTL_RX_QUOTA(budget);
         cur_rx = ring->cur_rx;
-        entry = cur_rx % ring->num_rx_desc;
-        desc = rtl8125_get_rxdesc(tp, ring->RxDescArray, entry);
         rx_left = ring->num_rx_desc + ring->dirty_rx - cur_rx;
         rx_left = rtl8125_rx_quota(rx_left, (u32)rx_quota);
 
-        for (; rx_left > 0; rx_left--) {
+        for (; rx_left > 0; rx_left--, cur_rx++) {
+                int pkt_size;
+#ifndef ENABLE_PAGE_REUSE
+                const void *rx_buf;
+#endif //!ENABLE_PAGE_REUSE
+
+                entry = cur_rx % ring->num_rx_desc;
+                desc = rtl8125_get_rxdesc(tp, ring->RxDescArray, entry);
                 status = le32_to_cpu(rtl8125_rx_desc_opts1(tp, desc));
+
                 if (status & DescOwn)
                         break;
 
@@ -15126,129 +16562,166 @@ rtl8125_rx_interrupt(struct net_device *dev,
 
                         RTLDEV->stats.rx_errors++;
 
-                        if (dev->features & NETIF_F_RXALL)
-                                goto process_pkt;
+                        if (!(dev->features & NETIF_F_RXALL))
+                                goto release_descriptor;
+                }
+                pkt_size = status & 0x00003fff;
+                if (likely(!(dev->features & NETIF_F_RXFCS)) &&
+                    !rtl8125_is_non_eop(tp, status))
+                        pkt_size -= ETH_FCS_LEN;
 
-                        rtl8125_mark_to_asic(tp, desc, tp->rx_buf_sz);
-                } else {
-                        struct sk_buff *skb;
-                        int pkt_size;
+                if (unlikely(pkt_size > tp->rx_buf_sz))
+                        goto drop_packet;
 
-process_pkt:
-                        pkt_size = status & 0x00003fff;
-                        if (likely(!(dev->features & NETIF_F_RXFCS)))
-                                pkt_size -= ETH_FCS_LEN;
-
-                        /*
-                         * The driver does not support incoming fragmented
-                         * frames. They are seen as a symptom of over-mtu
-                         * sized frames.
-                         */
-                        if (unlikely(rtl8125_fragmented_frame(tp, status)) ||
-                            unlikely(pkt_size > tp->rx_buf_sz)) {
-                                RTLDEV->stats.rx_dropped++;
-                                RTLDEV->stats.rx_length_errors++;
-                                rtl8125_mark_to_asic(tp, desc, tp->rx_buf_sz);
-                                continue;
-                        }
-
-                        skb = ring->Rx_skbuff[entry];
-
-                        if (!skb)
-                                break;
+#if !defined(ENABLE_RX_PACKET_FRAGMENT) || !defined(ENABLE_PAGE_REUSE)
+                /*
+                 * The driver does not support incoming fragmented
+                 * frames. They are seen as a symptom of over-mtu
+                 * sized frames.
+                 */
+                if (unlikely(rtl8125_fragmented_frame(tp, status)))
+                        goto drop_packet;
+#endif //!ENABLE_RX_PACKET_FRAGMENT || !ENABLE_PAGE_REUSE
 
 #ifdef ENABLE_PTP_SUPPORT
-                        if (tp->EnablePtp) {
-                                u8 desc_type;
+                if (tp->EnablePtp) {
+                        u8 desc_type;
 
-                                desc_type = rtl8125_rx_desc_type(status);
-                                if (desc_type == RXDESC_TYPE_NEXT && rx_left > 0) {
-                                        u32 status_next;
-                                        struct RxDescV3 *desc_next;
-                                        unsigned int entry_next;
-                                        struct sk_buff *skb_next;
+                        desc_type = rtl8125_rx_desc_type(status);
+                        if (desc_type == RXDESC_TYPE_NEXT && rx_left > 0) {
+                                u32 status_next;
+                                struct RxDescV3 *desc_next;
+                                unsigned int entry_next;
+                                struct sk_buff *skb_next;
 
-                                        entry_next = (cur_rx + 1) % ring->num_rx_desc;
-                                        desc_next = (struct RxDescV3 *)rtl8125_get_rxdesc(tp, ring->RxDescArray, entry_next);
+                                entry_next = (cur_rx + 1) % ring->num_rx_desc;
+                                desc_next = (struct RxDescV3 *)rtl8125_get_rxdesc(tp, ring->RxDescArray, entry_next);
+                                rmb();
+                                status_next = le32_to_cpu(desc_next->RxDescNormalDDWord4.opts1);
+                                if (unlikely(status_next & DescOwn)) {
+                                        udelay(1);
                                         rmb();
                                         status_next = le32_to_cpu(desc_next->RxDescNormalDDWord4.opts1);
                                         if (unlikely(status_next & DescOwn)) {
-                                                udelay(1);
-                                                rmb();
-                                                status_next = le32_to_cpu(desc_next->RxDescNormalDDWord4.opts1);
-                                                if (unlikely(status_next & DescOwn)) {
-                                                        if (netif_msg_rx_err(tp)) {
-                                                                printk(KERN_ERR
-                                                                       "%s: Rx Next Desc ERROR. status = %08x\n",
-                                                                       dev->name, status_next);
-                                                        }
-                                                        break;
+                                                if (netif_msg_rx_err(tp)) {
+                                                        printk(KERN_ERR
+                                                               "%s: Rx Next Desc ERROR. status = %08x\n",
+                                                               dev->name, status_next);
                                                 }
+                                                break;
                                         }
+                                }
 
-                                        cur_rx++;
-                                        rx_left--;
-                                        desc_type = rtl8125_rx_desc_type(status_next);
-                                        if (desc_type == RXDESC_TYPE_PTP)
-                                                rtl8125_rx_ptp_pktstamp(tp, skb, desc_next);
-                                        else
-                                                WARN_ON(1);
+                                cur_rx++;
+                                rx_left--;
+                                desc_type = rtl8125_rx_desc_type(status_next);
+                                if (desc_type == RXDESC_TYPE_PTP)
+                                        rtl8125_rx_ptp_pktstamp(tp, skb, desc_next);
+                                else
+                                        WARN_ON(1);
 
-                                        rx_buf_phy_addr = ring->RxDescPhyAddr[entry_next];
-                                        dma_unmap_single(tp_to_dev(tp), rx_buf_phy_addr,
-                                                         tp->rx_buf_sz, DMA_FROM_DEVICE);
-                                        skb_next = ring->Rx_skbuff[entry_next];
-                                        dev_kfree_skb_any(skb_next);
-                                        ring->Rx_skbuff[entry_next] = NULL;
-                                } else
-                                        WARN_ON(desc_type != RXDESC_TYPE_NORMAL);
-                        }
-#endif
-                        rx_buf_phy_addr = ring->RxDescPhyAddr[entry];
-                        dma_sync_single_for_cpu(tp_to_dev(tp),
-                                                rx_buf_phy_addr, tp->rx_buf_sz,
-                                                DMA_FROM_DEVICE);
-
-                        if (rtl8125_try_rx_copy(tp, ring, &skb, pkt_size,
-                                                desc, tp->rx_buf_sz)) {
-                                ring->Rx_skbuff[entry] = NULL;
+                                rx_buf_phy_addr = ring->RxDescPhyAddr[entry_next];
                                 dma_unmap_single(tp_to_dev(tp), rx_buf_phy_addr,
                                                  tp->rx_buf_sz, DMA_FROM_DEVICE);
-                        } else {
-                                dma_sync_single_for_device(tp_to_dev(tp), rx_buf_phy_addr,
-                                                           tp->rx_buf_sz, DMA_FROM_DEVICE);
+                                skb_next = ring->Rx_skbuff[entry_next];
+                                dev_kfree_skb_any(skb_next);
+                                ring->Rx_skbuff[entry_next] = NULL;
+                        } else
+                                WARN_ON(desc_type != RXDESC_TYPE_NORMAL);
+                }
+#endif
+#ifdef ENABLE_PAGE_REUSE
+                rxb = &ring->rx_buffer[entry];
+                skb = rxb->skb;
+                rxb->skb = NULL;
+                if (!skb) {
+                        skb = RTL_BUILD_SKB_INTR(rxb->data + rxb->page_offset - ring->rx_offset, tp->rx_buf_page_size / 2);
+                        if (!skb) {
+                                //netdev_err(tp->dev, "Failed to allocate RX skb!\n");
+                                goto drop_packet;
                         }
 
-#ifdef ENABLE_RSS_SUPPORT
-                        rtl8125_rx_hash(tp, (struct RxDescV3 *)desc, skb);
-#endif
-
-                        if (tp->cp_cmd & RxChkSum)
-                                rtl8125_rx_csum(tp, skb, desc);
-
                         skb->dev = dev;
+                        skb_reserve(skb, R8125_RX_ALIGN);
                         skb_put(skb, pkt_size);
-                        skb->protocol = eth_type_trans(skb, dev);
+                } else
+                        skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, rxb->page,
+                                        rxb->page_offset, pkt_size, tp->rx_buf_page_size / 2);
 
-                        if (skb->pkt_type == PACKET_MULTICAST)
-                                RTLDEV->stats.multicast++;
+                //recycle desc
+                rtl8125_put_rx_buffer(tp, ring, cur_rx, rxb);
 
-                        if (rtl8125_rx_vlan_skb(tp, desc, skb) < 0)
-                                rtl8125_rx_skb(tp, skb, ring_index);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
-                        dev->last_rx = jiffies;
-#endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
-                        RTLDEV->stats.rx_bytes += pkt_size;
-                        RTLDEV->stats.rx_packets++;
+                dma_sync_single_range_for_cpu(tp_to_dev(tp),
+                                              rxb->dma,
+                                              rxb->page_offset,
+                                              tp->rx_buf_sz,
+                                              DMA_FROM_DEVICE);
+#else //ENABLE_PAGE_REUSE
+                skb = RTL_ALLOC_SKB_INTR(&tp->r8125napi[ring->index].napi, pkt_size + R8125_RX_ALIGN);
+                if (!skb) {
+                        //netdev_err(tp->dev, "Failed to allocate RX skb!\n");
+                        goto drop_packet;
                 }
 
-                cur_rx++;
-                entry = cur_rx % ring->num_rx_desc;
-                desc = rtl8125_get_rxdesc(tp, ring->RxDescArray, entry);
+                skb->dev = dev;
+                skb_reserve(skb, R8125_RX_ALIGN);
+                skb_put(skb, pkt_size);
+
+                rx_buf_phy_addr = ring->RxDescPhyAddr[entry];
+                dma_sync_single_for_cpu(tp_to_dev(tp),
+                                        rx_buf_phy_addr, tp->rx_buf_sz,
+                                        DMA_FROM_DEVICE);
+                rx_buf = ring->Rx_skbuff[entry]->data;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,37)
-                prefetch(desc);
+                prefetch(rx_buf - R8125_RX_ALIGN);
 #endif
+                eth_copy_and_sum(skb, rx_buf, pkt_size, 0);
+
+                dma_sync_single_for_device(tp_to_dev(tp), rx_buf_phy_addr,
+                                           tp->rx_buf_sz, DMA_FROM_DEVICE);
+#endif //ENABLE_PAGE_REUSE
+
+#ifdef ENABLE_RX_PACKET_FRAGMENT
+                if (rtl8125_is_non_eop(tp, status)) {
+                        unsigned int entry_next;
+                        entry_next = (entry + 1) % ring->num_rx_desc;
+                        rxb = &ring->rx_buffer[entry_next];
+                        rxb->skb = skb;
+                        continue;
+                }
+#endif //ENABLE_RX_PACKET_FRAGMENT
+
+#ifdef ENABLE_RSS_SUPPORT
+                rtl8125_rx_hash(tp, (struct RxDescV3 *)desc, skb);
+#endif
+                rtl8125_rx_csum(tp, skb, desc, status);
+
+                skb->protocol = eth_type_trans(skb, dev);
+
+                if (skb->pkt_type == PACKET_MULTICAST)
+                        total_rx_multicast_packets++;
+
+                if (rtl8125_rx_vlan_skb(tp, desc, skb) < 0)
+                        rtl8125_rx_skb(tp, skb, ring_index);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
+                dev->last_rx = jiffies;
+#endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
+                total_rx_bytes += skb->len;
+                total_rx_packets++;
+
+#ifdef ENABLE_PAGE_REUSE
+                rxb->skb = NULL;
+                continue;
+#endif
+
+release_descriptor:
+                rtl8125_mark_to_asic(tp, desc, tp->rx_buf_sz);
+                continue;
+drop_packet:
+                RTLDEV->stats.rx_dropped++;
+                RTLDEV->stats.rx_length_errors++;
+                goto release_descriptor;
         }
 
         count = cur_rx - ring->cur_rx;
@@ -15258,6 +16731,10 @@ process_pkt:
         if (!delta && count && netif_msg_intr(tp))
                 printk(KERN_INFO "%s: no Rx buffer allocated\n", dev->name);
         ring->dirty_rx += delta;
+
+        RTLDEV->stats.rx_bytes += total_rx_bytes;
+        RTLDEV->stats.rx_packets += total_rx_packets;
+        RTLDEV->stats.multicast += total_rx_multicast_packets;
 
         /*
          * FIXME: until there is periodic timer to try and refill the ring,
@@ -15270,7 +16747,7 @@ process_pkt:
                 printk(KERN_EMERG "%s: Rx buffers exhausted\n", dev->name);
 
 rx_out:
-        return count;
+        return total_rx_packets;
 }
 
 static bool
@@ -15462,11 +16939,11 @@ static void rtl8125_down(struct net_device *dev)
 
         //rtl8125_delete_link_timer(dev, &tp->link_timer);
 
+        netif_carrier_off(dev);
+
         netif_tx_disable(dev);
 
         _rtl8125_wait_for_quiescence(dev);
-
-        netif_carrier_off(dev);
 
         rtl8125_hw_reset(dev);
 
@@ -15526,7 +17003,7 @@ static void rtl8125_shutdown(struct pci_dev *pdev)
 
         rtnl_lock();
 
-        if (tp->DASH)
+        if (HW_DASH_SUPPORT_DASH(tp))
                 rtl8125_driver_stop(tp);
 
         rtl8125_set_bios_setting(dev);
@@ -15548,21 +17025,6 @@ static void rtl8125_shutdown(struct pci_dev *pdev)
         }
 }
 #endif
-
-/**
- *  rtl8125_get_stats - Get rtl8125 read/write statistics
- *  @dev: The Ethernet Device to get statistics for
- *
- *  Get TX/RX statistics for rtl8125
- */
-static struct
-net_device_stats *rtl8125_get_stats(struct net_device *dev)
-{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-        struct rtl8125_private *tp = netdev_priv(dev);
-#endif
-        return &RTLDEV->stats;
-}
 
 #ifdef CONFIG_PM
 
@@ -15600,9 +17062,9 @@ rtl8125_suspend(struct pci_dev *pdev, pm_message_t state)
 
         set_bit(R8125_FLAG_DOWN, tp->task_flags);
 
-        netif_tx_disable(dev);
-
         netif_carrier_off(dev);
+
+        netif_tx_disable(dev);
 
         netif_device_detach(dev);
 
@@ -15617,7 +17079,7 @@ rtl8125_suspend(struct pci_dev *pdev, pm_message_t state)
 
         rtl8125_powerdown_pll(dev, 1);
 
-        if (tp->DASH)
+        if (HW_DASH_SUPPORT_DASH(tp))
                 rtl8125_driver_stop(tp);
 
         rtnl_unlock();

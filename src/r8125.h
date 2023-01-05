@@ -51,11 +51,34 @@
 typedef int netdev_tx_t;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,12,0)
+static inline bool dev_page_is_reusable(const struct page *page)
+{
+        return likely(page_to_nid(page) == numa_mem_id() &&
+                      !page_is_pfmemalloc(page));
+}
+#endif
+
 /*
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0)&& !defined(ENABLE_LIB_SUPPORT)
 #define RTL_USE_NEW_INTR_API
 #endif
 */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#define dma_map_page_attrs(dev, page, offset, size, dir, attrs) \
+	dma_map_page(dev, page, offset, size, dir)
+#define dma_unmap_page_attrs(dev, page, size, dir, attrs) \
+	 dma_unmap_page(dev, page, size, dir)
+#endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
+#define page_ref_inc(page) atomic_inc(&page->_count)
+#endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,4,216)
+#define page_ref_count(page) atomic_read(&page->_count)
+#endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,4,216)
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 #define skb_transport_offset(skb) (skb->h.raw - skb->data)
@@ -151,6 +174,14 @@ do { \
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,19,0)
 #undef RTL_ALLOC_SKB_INTR
 #define RTL_ALLOC_SKB_INTR(napi, length) napi_alloc_skb(napi, length)
+#endif
+#endif
+
+#define RTL_BUILD_SKB_INTR(data, frag_size) build_skb(data, frag_size)
+#ifdef CONFIG_R8125_NAPI
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
+#undef RTL_BUILD_SKB_INTR
+#define RTL_BUILD_SKB_INTR(data, frag_size) napi_build_skb(data, frag_size)
 #endif
 #endif
 
@@ -334,7 +365,7 @@ do { \
 #ifndef NET_IP_ALIGN
 #define NET_IP_ALIGN        2
 #endif
-#define RTK_RX_ALIGN        8
+#define R8125_RX_ALIGN        NET_IP_ALIGN
 
 #ifdef CONFIG_R8125_NAPI
 #define NAPI_SUFFIX "-NAPI"
@@ -367,7 +398,7 @@ do { \
 #define RSS_SUFFIX ""
 #endif
 
-#define RTL8125_VERSION "9.010.01" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
+#define RTL8125_VERSION "9.011.00" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
 #define MODULENAME "r8125"
 #define PFX MODULENAME ": "
 
@@ -459,6 +490,8 @@ This is free software, and you are welcome to redistribute it under certain cond
 #define RTL8125_TX_TIMEOUT  (6 * HZ)
 #define RTL8125_LINK_TIMEOUT    (1 * HZ)
 #define RTL8125_ESD_TIMEOUT (2 * HZ)
+
+#define rtl8125_rx_page_size(order) (PAGE_SIZE << order)
 
 #define MAX_NUM_TX_DESC 1024    /* Maximum number of Tx descriptor registers */
 #define MAX_NUM_RX_DESC 1024    /* Maximum number of Rx descriptor registers */
@@ -553,8 +586,11 @@ This is free software, and you are welcome to redistribute it under certain cond
 #ifndef ADVERTISED_2500baseX_Full
 #define ADVERTISED_2500baseX_Full  0x8000
 #endif
+#define RTK_ADVERTISED_5000baseX_Full  BIT(48)
 
 #define RTK_ADVERTISE_2500FULL  0x80
+#define RTK_ADVERTISE_5000FULL  0x100
+#define RTK_ADVERTISE_10000FULL  0x1000
 #define RTK_LPA_ADVERTISE_2500FULL  0x20
 #define RTK_LPA_ADVERTISE_5000FULL  0x40
 #define RTK_LPA_ADVERTISE_10000FULL  0x800
@@ -564,6 +600,9 @@ This is free software, and you are welcome to redistribute it under certain cond
 
 /* Tx NO CLOSE */
 #define MAX_TX_NO_CLOSE_DESC_PTR_V2 0x10000
+#define MAX_TX_NO_CLOSE_DESC_PTR_MASK_V2 0xFFFF
+#define MAX_TX_NO_CLOSE_DESC_PTR_V3 0x100000000
+#define MAX_TX_NO_CLOSE_DESC_PTR_MASK_V3 0xFFFFFFFF
 #define TX_NO_CLOSE_SW_PTR_MASK_V2 0x1FFFF
 
 #ifndef ETH_MIN_MTU
@@ -581,6 +620,10 @@ This is free software, and you are welcome to redistribute it under certain cond
 #endif
 #ifndef READ_ONCE
 #define READ_ONCE(var) (*((volatile typeof(var) *)(&(var))))
+#endif
+
+#ifndef SPEED_5000
+#define SPEED_5000		5000
 #endif
 
 /*****************************************************************************/
@@ -1233,12 +1276,15 @@ enum RTL8125_registers {
         IMR_V2_SET_REG_8125   = 0x0D0C,
         TDU_STA_8125       = 0x0D08,
         RDU_STA_8125       = 0x0D0A,
+        DOUBLE_VLAN_CONFIG = 0x1000,
         TX_NEW_CTRL        = 0x203E,
         TNPDS_Q1_LOW_8125  = 0x2100,
         PLA_TXQ0_IDLE_CREDIT = 0x2500,
         PLA_TXQ1_IDLE_CREDIT = 0x2504,
         SW_TAIL_PTR0_8125  = 0x2800,
         HW_CLO_PTR0_8125   = 0x2802,
+        SW_TAIL_PTR0_8126  = 0x2800,
+        HW_CLO_PTR0_8126   = 0x2800,
         RDSAR_Q1_LOW_8125  = 0x4000,
         RSS_CTRL_8125      = 0x4500,
         Q_NUM_CTRL_8125    = 0x4800,
@@ -1386,6 +1432,7 @@ enum RTL8125_register_content {
 
         /* rtl8125_PHYstatus */
         PowerSaveStatus = 0x80,
+        _5000bpsF = 0x1000,
         _2500bpsF = 0x400,
         TxFlowCtrl = 0x40,
         RxFlowCtrl = 0x20,
@@ -1631,7 +1678,17 @@ enum bits {
         BIT_31 = (1 << 31)
 };
 
-enum effuse {
+#define RTL8125_CP_NUM 4
+#define RTL8125_MAX_SUPPORT_cp_len 110
+
+enum rtl8125_cp_status {
+        rtl8125_cp_normal = 0,
+        rtl8125_cp_short,
+        rtl8125_cp_open,
+        rtl8125_cp_unknown
+};
+
+enum efuse {
         EFUSE_NOT_SUPPORT = 0,
         EFUSE_SUPPORT_V1,
         EFUSE_SUPPORT_V2,
@@ -1781,6 +1838,14 @@ struct rtl8125_tx_ring {
         u16 tdsar_reg; /* Transmit Descriptor Start Address */
 };
 
+struct rtl8125_rx_buffer {
+        struct page *page;
+        u32 page_offset;
+        dma_addr_t dma;
+        void* data;
+        struct sk_buff *skb;
+};
+
 struct rtl8125_rx_ring {
         void* priv;
         u32 index;
@@ -1791,7 +1856,12 @@ struct rtl8125_rx_ring {
         u32 RxDescAllocSize;
         u64 RxDescPhyAddr[MAX_NUM_RX_DESC]; /* Rx desc physical address*/
         dma_addr_t RxPhyAddr;
+#ifdef ENABLE_PAGE_REUSE
+        struct rtl8125_rx_buffer rx_buffer[MAX_NUM_RX_DESC];
+        u16 rx_offset;
+#else
         struct sk_buff *Rx_skbuff[MAX_NUM_RX_DESC]; /* Rx data buffers */
+#endif //ENABLE_PAGE_REUSE
 
         u16 rdsar_reg; /* Receive Descriptor Start Address */
 };
@@ -2059,6 +2129,11 @@ struct rtl8125_private {
         //struct sk_buff *Rx_skbuff[MAX_NUM_RX_DESC]; /* Rx data buffers */
         //struct ring_info tx_skb[MAX_NUM_TX_DESC];   /* Tx data buffers */
         unsigned rx_buf_sz;
+#ifdef ENABLE_PAGE_REUSE
+        unsigned rx_buf_page_order;
+        unsigned rx_buf_page_size;
+        u32 page_reuse_fail_cnt;
+#endif //ENABLE_PAGE_REUSE
         u16 HwSuppNumTxQueues;
         u16 HwSuppNumRxQueues;
         unsigned int num_tx_rings;
@@ -2076,6 +2151,7 @@ struct rtl8125_private {
         unsigned int esd_flag;
         unsigned int pci_cfg_is_read;
         unsigned int rtl8125_rx_config;
+        u16 rms;
         u16 cp_cmd;
         u32 intr_mask;
         u32 timer_intr_mask;
@@ -2098,13 +2174,14 @@ struct rtl8125_private {
         u8  autoneg;
         u8  duplex;
         u32 speed;
-        u32 advertising;
+        u64 advertising;
         enum rtl8125_fc_mode fcpause;
+        u32 HwSuppMaxPhyLinkSpeed;
         u16 eeprom_len;
         u16 cur_page;
         u32 bios_setting;
 
-        int (*set_speed)(struct net_device *, u8 autoneg, u32 speed, u8 duplex, u32 adv);
+        int (*set_speed)(struct net_device *, u8 autoneg, u32 speed, u8 duplex, u64 adv);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
         void (*get_settings)(struct net_device *, struct ethtool_cmd *);
 #else
@@ -2189,6 +2266,7 @@ struct rtl8125_private {
 
         u32 HwPcieSNOffset;
 
+        u32 MaxTxDescPtrMask;
         u8 HwSuppTxNoCloseVer;
         u8 EnableTxNoClose;
 
@@ -2404,6 +2482,7 @@ enum mcfg {
         CFG_METHOD_5,
         CFG_METHOD_6,
         CFG_METHOD_7,
+        CFG_METHOD_8,
         CFG_METHOD_DEFAULT,
         CFG_METHOD_MAX
 };
@@ -2438,6 +2517,7 @@ enum mcfg {
 #define NIC_RAMCODE_VERSION_CFG_METHOD_3 (0x0b33)
 #define NIC_RAMCODE_VERSION_CFG_METHOD_4 (0x0b17)
 #define NIC_RAMCODE_VERSION_CFG_METHOD_5 (0x0b74)
+#define NIC_RAMCODE_VERSION_CFG_METHOD_8 (0x0023)
 
 //hwoptimize
 #define HW_PATCH_SOC_LAN (BIT_0)
@@ -2538,6 +2618,10 @@ static inline void rtl8125_lib_reset_complete(struct rtl8125_private *tp) { }
 #define HW_HAS_WRITE_PHY_MCU_RAM_CODE(_M)        (((_M)->HwHasWrRamCodeToMicroP == TRUE) ? 1 : 0)
 #define HW_SUPPORT_D0_SPEED_UP(_M)        ((_M)->HwSuppD0SpeedUpVer > 0)
 #define HW_SUPPORT_MAC_MCU(_M)        ((_M)->HwSuppMacMcuVer > 0)
+
+#define HW_SUPP_PHY_LINK_SPEED_GIGA(_M)        ((_M)->HwSuppMaxPhyLinkSpeed >= 1000)
+#define HW_SUPP_PHY_LINK_SPEED_2500M(_M)        ((_M)->HwSuppMaxPhyLinkSpeed >= 2500)
+#define HW_SUPP_PHY_LINK_SPEED_5000M(_M)        ((_M)->HwSuppMaxPhyLinkSpeed >= 5000)
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34)
 #define netdev_mc_count(dev) ((dev)->mc_count)
