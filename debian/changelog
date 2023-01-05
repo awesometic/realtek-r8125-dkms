@@ -1,3 +1,10 @@
+realtek-r8125-dkms (9.011.00-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.011.00 with remaining support for kernel
+  6.1 or above by the previous patch
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Thu, 05 Jan 2023 10:32:06 +0900
+
 realtek-r8125-dkms (9.010.01-2) stable; urgency=medium
 
   * Add support for kernel 6.1
