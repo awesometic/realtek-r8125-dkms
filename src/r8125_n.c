@@ -16698,6 +16698,8 @@ rtl8125_rx_interrupt(struct net_device *dev,
 
                 skb->protocol = eth_type_trans(skb, dev);
 
+                total_rx_bytes += skb->len;
+
                 if (skb->pkt_type == PACKET_MULTICAST)
                         total_rx_multicast_packets++;
 
@@ -16707,7 +16709,6 @@ rtl8125_rx_interrupt(struct net_device *dev,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
                 dev->last_rx = jiffies;
 #endif //LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
-                total_rx_bytes += skb->len;
                 total_rx_packets++;
 
 #ifdef ENABLE_PAGE_REUSE

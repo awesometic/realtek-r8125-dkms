@@ -398,7 +398,7 @@ do { \
 #define RSS_SUFFIX ""
 #endif
 
-#define RTL8125_VERSION "9.011.00" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
+#define RTL8125_VERSION "9.011.01" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
 #define MODULENAME "r8125"
 #define PFX MODULENAME ": "
 
@@ -676,11 +676,11 @@ typedef int *napi_budget;
 typedef struct napi_struct *napi_ptr;
 typedef int napi_budget;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
-#define RTL_NAPI_CONFIG(ndev, priv, function, weight)   netif_napi_add(ndev, &priv->napi, function, weight)
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
 #define RTL_NAPI_CONFIG(ndev, priv, function, weight)   netif_napi_add_weight(ndev, &priv->napi, function, weight)
-#endif
+#else
+#define RTL_NAPI_CONFIG(ndev, priv, function, weight)   netif_napi_add(ndev, &priv->napi, function, weight)
+#endif //LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
 #define RTL_NAPI_QUOTA(budget, ndev)            min(budget, budget)
 #define RTL_GET_PRIV(stuct_ptr, priv_struct)        container_of(stuct_ptr, priv_struct, stuct_ptr)
 #define RTL_GET_NETDEV(priv_ptr)            struct net_device *dev = priv_ptr->dev;
