@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.012.03-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.012.03
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Sat, 04 Nov 2023 15:28:48 +0900
+
 realtek-r8125-dkms (9.011.01-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.011.01
