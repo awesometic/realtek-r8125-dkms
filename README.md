@@ -4,6 +4,8 @@
 
 This provides Realtek r8125 driver in DKMS way so that you can keep the latest driver even after the kernel upgrade.
 
+From **9.012.03** version, now it supports both **2.5 Gbits** and **5 Gbits** ethernet card by Realtek.
+
 ## Before use
 
 This DKMS package is for Realtek RTL8125 (r8125 in module name) Ethernet, which is designed for the PCI interface.
@@ -35,7 +37,7 @@ sudo dpkg -i realtek-r8125-dkms*.deb
 > If multiple files selected by the wild card, you should type the specific version of the file.
 >
 > ```bash
-> sudo dpkg -i realtek-r8125-dkms_9.011.01-1_amd64.deb
+> sudo dpkg -i realtek-r8125-dkms_9.012.03-1_amd64.deb
 > ```
 
 If dependency error occurs, try to fix that with `apt` command.
@@ -101,7 +103,7 @@ blacklist r8169
 EOT
 ```
 
-To apply the new blacklist to your kernel, update your initramfs via 
+To apply the new blacklist to your kernel, update your initramfs via
 
 ```bash
 sudo update-initramfs -u
