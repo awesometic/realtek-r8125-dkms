@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.012.04-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.012.04
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Tue, 02 Jan 2024 12:27:51 +0900
+
 realtek-r8125-dkms (9.012.03-2) stable; urgency=medium
 
   * Fixed using wrong source code directory when installing new kernel
