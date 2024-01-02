@@ -15229,9 +15229,9 @@ rtl8125_init_software_variable(struct net_device *dev)
         }
 
         tp->HwCurrIsrVer = tp->HwSuppIsrVer;
-        if (tp->HwSuppIsrVer == 2) {
+        if (tp->HwCurrIsrVer > 1) {
                 if (!(tp->features & RTL_FEATURE_MSIX) ||
-                    tp->irq_nvecs < R8125_MIN_MSIX_VEC_8125B)
+                    tp->irq_nvecs < tp->min_irq_nvecs)
                         tp->HwCurrIsrVer = 1;
         }
 
