@@ -2,10 +2,10 @@
 /*
 ################################################################################
 #
-# r8125 is the Linux device driver released for Realtek 2.5/5 Gigabit Ethernet
+# r8125 is the Linux device driver released for Realtek 2.5 Gigabit Ethernet
 # controllers with PCI-Express interface.
 #
-# Copyright(c) 2023 Realtek Semiconductor Corp. All rights reserved.
+# Copyright(c) 2024 Realtek Semiconductor Corp. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free
@@ -164,6 +164,7 @@ RX_DASH_BUFFER_TYPE_2, *PRX_DASH_BUFFER_TYPE_2;
 #define OCP_REG_CR (0x36)
 #define OCP_REG_DMEMSTA (0x38)
 #define OCP_REG_GPHYAR (0x60)
+#define OCP_REG_FIRMWARE_MAJOR_VERSION (0x120)
 
 
 #define OCP_REG_CONFIG0_DASHEN           BIT_15
@@ -175,10 +176,16 @@ RX_DASH_BUFFER_TYPE_2, *PRX_DASH_BUFFER_TYPE_2;
 #define OCP_REG_CONFIG0_DRV_WAIT_OOB     BIT_8
 #define OCP_REG_CONFIG0_TLSEN            BIT_7
 
-#define HW_DASH_SUPPORT_DASH(_M)        ((_M)->HwSuppDashVer > 0 )
-#define HW_DASH_SUPPORT_TYPE_1(_M)        ((_M)->HwSuppDashVer == 1 )
-#define HW_DASH_SUPPORT_TYPE_2(_M)        ((_M)->HwSuppDashVer == 2 )
-#define HW_DASH_SUPPORT_TYPE_3(_M)        ((_M)->HwSuppDashVer == 3 )
+#define HW_DASH_SUPPORT_DASH(_M)        ((_M)->HwSuppDashVer > 0)
+#define HW_DASH_SUPPORT_TYPE_1(_M)      ((_M)->HwSuppDashVer == 1)
+#define HW_DASH_SUPPORT_TYPE_2(_M)      ((_M)->HwSuppDashVer == 2)
+#define HW_DASH_SUPPORT_TYPE_3(_M)      ((_M)->HwSuppDashVer == 3)
+#define HW_DASH_SUPPORT_TYPE_4(_M)      ((_M)->HwSuppDashVer == 4)
+#define HW_DASH_SUPPORT_CMAC(_M)        (HW_DASH_SUPPORT_TYPE_2(_M) || HW_DASH_SUPPORT_TYPE_3(_M))
+#define HW_DASH_SUPPORT_IPC2(_M)        (HW_DASH_SUPPORT_TYPE_4(_M))
+#define HW_DASH_SUPPORT_GET_FIRMWARE_VERSION(_M) (HW_DASH_SUPPORT_TYPE_2(_M) || \
+                                                  HW_DASH_SUPPORT_TYPE_3(_M) || \
+                                                  HW_DASH_SUPPORT_TYPE_4(_M))
 
 #define RECV_FROM_FW_BUF_SIZE (1520)
 #define SEND_TO_FW_BUF_SIZE (1520)

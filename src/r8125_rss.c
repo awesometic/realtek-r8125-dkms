@@ -2,10 +2,10 @@
 /*
 ################################################################################
 #
-# r8125 is the Linux device driver released for Realtek 2.5/5 Gigabit Ethernet
+# r8125 is the Linux device driver released for Realtek 2.5 Gigabit Ethernet
 # controllers with PCI-Express interface.
 #
-# Copyright(c) 2023 Realtek Semiconductor Corp. All rights reserved.
+# Copyright(c) 2024 Realtek Semiconductor Corp. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free
@@ -60,21 +60,21 @@ static int rtl8125_get_rss_hash_opts(struct rtl8125_private *tp,
         switch (cmd->flow_type) {
         case TCP_V4_FLOW:
                 cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-        /* fallthrough */
+                fallthrough;
         case UDP_V4_FLOW:
                 if (tp->rss_flags & RTL_8125_RSS_FLAG_HASH_UDP_IPV4)
                         cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-        /* fallthrough */
+                fallthrough;
         case IPV4_FLOW:
                 cmd->data |= RXH_IP_SRC | RXH_IP_DST;
                 break;
         case TCP_V6_FLOW:
                 cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-        /* fallthrough */
+                fallthrough;
         case UDP_V6_FLOW:
                 if (tp->rss_flags & RTL_8125_RSS_FLAG_HASH_UDP_IPV6)
                         cmd->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-        /* fallthrough */
+                fallthrough;
         case IPV6_FLOW:
                 cmd->data |= RXH_IP_SRC | RXH_IP_DST;
                 break;
@@ -324,28 +324,6 @@ static void rtl8125_get_reta(struct rtl8125_private *tp, u32 *indir)
                 indir[i] = tp->rss_indir_tbl[i];
 }
 
-int rtl8125_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
-                     u8 *hfunc)
-{
-        struct rtl8125_private *tp = netdev_priv(dev);
-
-        netif_info(tp, drv, tp->dev, "rss get rxfh\n");
-
-        if (!(dev->features & NETIF_F_RXHASH))
-                return -EOPNOTSUPP;
-
-        if (hfunc)
-                *hfunc = ETH_RSS_HASH_TOP;
-
-        if (indir)
-                rtl8125_get_reta(tp, indir);
-
-        if (key)
-                memcpy(key, tp->rss_key, RTL8125_RSS_KEY_SIZE);
-
-        return 0;
-}
-
 static u32 rtl8125_rss_key_reg(struct rtl8125_private *tp)
 {
         return RSS_KEY_8125;
@@ -386,6 +364,88 @@ static void rtl8125_store_rss_key(struct rtl8125_private *tp)
                 RTL_W32(tp, rss_key_reg + i, *rss_key++);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,8,0)
+int rtl8125_get_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        netif_info(tp, drv, tp->dev, "rss get rxfh\n");
+
+        if (!(dev->features & NETIF_F_RXHASH))
+                return -EOPNOTSUPP;
+
+        rxfh->hfunc = ETH_RSS_HASH_TOP;
+
+        if (rxfh->indir)
+                rtl8125_get_reta(tp, rxfh->indir);
+
+        if (rxfh->key)
+                memcpy(rxfh->key, tp->rss_key, RTL8125_RSS_KEY_SIZE);
+
+        return 0;
+}
+
+int rtl8125_set_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh,
+                     struct netlink_ext_ack *extack)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+        int i;
+        u32 reta_entries = rtl8125_rss_indir_tbl_entries(tp);
+
+        netif_info(tp, drv, tp->dev, "rss set rxfh\n");
+
+        /* We require at least one supported parameter to be changed and no
+         * change in any of the unsupported parameters
+         */
+        if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE && rxfh->hfunc != ETH_RSS_HASH_TOP)
+                return -EOPNOTSUPP;
+
+        /* Fill out the redirection table */
+        if (rxfh->indir) {
+                int max_queues = tp->num_rx_rings;
+
+                /* Verify user input. */
+                for (i = 0; i < reta_entries; i++)
+                        if (rxfh->indir[i] >= max_queues)
+                                return -EINVAL;
+
+                for (i = 0; i < reta_entries; i++)
+                        tp->rss_indir_tbl[i] = rxfh->indir[i];
+        }
+
+        /* Fill out the rss hash key */
+        if (rxfh->key)
+                memcpy(tp->rss_key, rxfh->key, RTL8125_RSS_KEY_SIZE);
+
+        rtl8125_store_reta(tp);
+
+        rtl8125_store_rss_key(tp);
+
+        return 0;
+}
+#else
+int rtl8125_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
+                     u8 *hfunc)
+{
+        struct rtl8125_private *tp = netdev_priv(dev);
+
+        netif_info(tp, drv, tp->dev, "rss get rxfh\n");
+
+        if (!(dev->features & NETIF_F_RXHASH))
+                return -EOPNOTSUPP;
+
+        if (hfunc)
+                *hfunc = ETH_RSS_HASH_TOP;
+
+        if (indir)
+                rtl8125_get_reta(tp, indir);
+
+        if (key)
+                memcpy(key, tp->rss_key, RTL8125_RSS_KEY_SIZE);
+
+        return 0;
+}
+
 int rtl8125_set_rxfh(struct net_device *dev, const u32 *indir,
                      const u8 *key, const u8 hfunc)
 {
@@ -424,11 +484,19 @@ int rtl8125_set_rxfh(struct net_device *dev, const u32 *indir,
 
         return 0;
 }
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,8,0) */
 
 static u32 rtl8125_get_rx_desc_hash(struct rtl8125_private *tp,
-                                    struct RxDescV3 *descv3)
+                                    struct RxDesc *desc)
 {
-        return le32_to_cpu(descv3->RxDescNormalDDWord2.RSSResult);
+        switch (tp->InitRxDescType) {
+        case RX_DESC_RING_TYPE_3:
+                return le32_to_cpu(((struct RxDescV3 *)desc)->RxDescNormalDDWord2.RSSResult);
+        case RX_DESC_RING_TYPE_4:
+                return le32_to_cpu(((struct RxDescV4 *)desc)->RxDescNormalDDWord1.RSSResult);
+        default:
+                return 0;
+        }
 }
 
 #define RXS_8125B_RSS_UDP BIT(9)
@@ -437,9 +505,16 @@ static u32 rtl8125_get_rx_desc_hash(struct rtl8125_private *tp,
 #define RXS_8125_RSS_TCP BIT(13)
 #define RTL8125_RXS_RSS_L3_TYPE_MASK (RXS_8125_RSS_IPV4 | RXS_8125_RSS_IPV6)
 #define RTL8125_RXS_RSS_L4_TYPE_MASK (RXS_8125_RSS_TCP | RXS_8125B_RSS_UDP)
-void rtl8125_rx_hash(struct rtl8125_private *tp,
-                     struct RxDescV3 *descv3,
-                     struct sk_buff *skb)
+
+#define RXS_8125B_RSS_UDP_V4 BIT(11)
+#define RXS_8125_RSS_IPV4_V4 BIT(12)
+#define RXS_8125_RSS_IPV6_V4 BIT(13)
+#define RXS_8125_RSS_TCP_V4 BIT(14)
+#define RTL8125_RXS_RSS_L3_TYPE_MASK_V4 (RXS_8125_RSS_IPV4_V4 | RXS_8125_RSS_IPV6_V4)
+#define RTL8125_RXS_RSS_L4_TYPE_MASK_V4 (RXS_8125_RSS_TCP_V4 | RXS_8125B_RSS_UDP_V4)
+static void rtl8125_rx_hash_v3(struct rtl8125_private *tp,
+                               struct RxDescV3 *descv3,
+                               struct sk_buff *skb)
 {
         u16 rss_header_info;
 
@@ -451,9 +526,44 @@ void rtl8125_rx_hash(struct rtl8125_private *tp,
         if (!(rss_header_info & RTL8125_RXS_RSS_L3_TYPE_MASK))
                 return;
 
-        skb_set_hash(skb, rtl8125_get_rx_desc_hash(tp, descv3),
+        skb_set_hash(skb, rtl8125_get_rx_desc_hash(tp, (struct RxDesc *)descv3),
                      (RTL8125_RXS_RSS_L4_TYPE_MASK & rss_header_info) ?
                      PKT_HASH_TYPE_L4 : PKT_HASH_TYPE_L3);
+}
+
+static void rtl8125_rx_hash_v4(struct rtl8125_private *tp,
+                               struct RxDescV4 *descv4,
+                               struct sk_buff *skb)
+{
+        u16 rss_header_info;
+
+        if (!(tp->dev->features & NETIF_F_RXHASH))
+                return;
+
+        rss_header_info = le16_to_cpu(descv4->RxDescNormalDDWord1.RSSInfo);
+
+        if (!(rss_header_info & RTL8125_RXS_RSS_L3_TYPE_MASK_V4))
+                return;
+
+        skb_set_hash(skb, rtl8125_get_rx_desc_hash(tp, (struct RxDesc *)descv4),
+                     (RTL8125_RXS_RSS_L4_TYPE_MASK_V4 & rss_header_info) ?
+                     PKT_HASH_TYPE_L4 : PKT_HASH_TYPE_L3);
+}
+
+void rtl8125_rx_hash(struct rtl8125_private *tp,
+                     struct RxDesc *desc,
+                     struct sk_buff *skb)
+{
+        switch (tp->InitRxDescType) {
+        case RX_DESC_RING_TYPE_3:
+                rtl8125_rx_hash_v3(tp, (struct RxDescV3 *)desc, skb);
+                break;
+        case RX_DESC_RING_TYPE_4:
+                rtl8125_rx_hash_v4(tp, (struct RxDescV4 *)desc, skb);
+                break;
+        default:
+                return;
+        }
 }
 
 void rtl8125_disable_rss(struct rtl8125_private *tp)

@@ -1,6 +1,6 @@
 <Linux device driver for Realtek Ethernet controllers>
 
-	This is the Linux device driver released for Realtek 2.5/5 Gigabit Ethernet controllers with PCI-Express interface.
+	This is the Linux device driver released for Realtek 2.5 Gigabit Ethernet controllers with PCI-Express interface.
 
 <Requirements>
 
