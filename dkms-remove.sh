@@ -9,7 +9,7 @@ fi
 
 DRV_DIR="$(pwd)"
 DRV_NAME=r8125
-DRV_VERSION=9.012.04
+DRV_VERSION=9.013.02
 
 dkms remove ${DRV_NAME}/${DRV_VERSION} --all
 rm -rf /usr/src/${DRV_NAME}-${DRV_VERSION}
