@@ -4,8 +4,6 @@
 
 This provides Realtek r8125 driver in DKMS way so that you can keep the latest driver even after the kernel upgrade.
 
-From **9.012.03** version, now it supports both **2.5 Gbits** and **5 Gbits** ethernet card by Realtek.
-
 ## Before use
 
 This DKMS package is for Realtek RTL8125 (r8125 in module name) Ethernet, which is designed for the PCI interface.
