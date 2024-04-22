@@ -1,3 +1,9 @@
+realtek-r8125-dkms (9.013.02-2) stable; urgency=medium
+
+  * Rename BASEDIR to BSRC in dkms.conf
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Mon, 22 Apr 2024 18:14:49 +0900
+
 realtek-r8125-dkms (9.013.02-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.013.02
