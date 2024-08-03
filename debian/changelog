@@ -1,3 +1,39 @@
+realtek-r8125-dkms (9.013.02-2) stable; urgency=medium
+
+  * Rename BASEDIR to BSRC in dkms.conf
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Mon, 22 Apr 2024 18:14:49 +0900
+
+realtek-r8125-dkms (9.013.02-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.013.02
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Mon, 08 Apr 2024 12:19:25 +0900
+
+realtek-r8125-dkms (9.012.04-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.012.04
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Tue, 02 Jan 2024 12:27:51 +0900
+
+realtek-r8125-dkms (9.012.03-2) stable; urgency=medium
+
+  * Fixed using wrong source code directory when installing new kernel
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Fri, 01 Dec 2023 15:49:48 +0900
+
+realtek-r8125-dkms (9.012.03-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.012.03
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Sat, 04 Nov 2023 15:28:48 +0900
+
+realtek-r8125-dkms (9.011.01-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.011.01
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Wed, 26 Apr 2023 13:55:30 +0900
+
 realtek-r8125-dkms (9.011.00-1) stable; urgency=medium
 
   * Update Realtek r8125 driver to 9.011.00 with remaining support for kernel

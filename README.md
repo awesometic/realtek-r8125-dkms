@@ -165,10 +165,72 @@ absolutely you don't need to.
       ```bash
       sudo lspci -v -d ::0200 | grep 81
 
+<<<<<<< HEAD
       2a:00.0 Ethernet controller: Realtek Semiconductor Co., Ltd. RTL8125 2.5GbE Controller (rev 05)
           Kernel driver in use: r8125
           Kernel modules: r8169, r8125
       ```
+||||||| a9a0ddf
+```bash
+sudo tee -a /etc/modprobe.d/blacklist-r8169.conf > /dev/null <<EOT
+# To use r8125 driver explicitly
+blacklist r8169
+EOT
+```
+
+To apply the new blacklist to your kernel, update your initramfs via
+
+```bash
+sudo update-initramfs -u
+```
+
+Finally, reboot to take effect.
+
+> - If you need to load both r8169 and r8125, maybe removing r8125 firmware could make it work. Please enter `sudo rm -f /lib/firmware/rtl_nic/rtl8125*` to remove all the r8125 firmwares on the system. But it is just a workaround, you should have to do this every time installing the new kernel version or new Linux firmware.
+> - In the case of the Debian package, I will update the scripts to make it do this during the installation.
+
+## Debian package build
+
+You can build yourself this after installing some dependencies including `dkms`.
+
+```bash
+sudo apt install devscripts debmake debhelper build-essential dkms
+```
+
+```bash
+dpkg-buildpackage -b -rfakeroot -us -uc
+```
+=======
+```bash
+sudo tee -a /etc/modprobe.d/blacklist-r8169.conf > /dev/null <<EOT
+# To use r8125 driver explicitly
+blacklist r8169
+EOT
+```
+
+To apply the new blacklist to your kernel, update your initramfs via
+
+```bash
+sudo update-initramfs -u
+```
+
+Finally, reboot to take effect.
+
+> - If you need to load both r8169 and r8125, maybe removing r8125 firmware could make it work. Please enter `sudo rm -f /lib/firmware/rtl_nic/rtl8125*` to remove all the r8125 firmwares on the system. But it is just a workaround, you should have to do this every time installing the new kernel version or new Linux firmware.
+> - In the case of the Debian package, I will update the scripts to make it do this during the installation.
+
+## Debian package build
+
+You can build yourself this after installing some dependencies including `dkms`.
+
+```bash
+sudo apt install devscripts debmake debhelper build-essential dkms
+```
+
+```bash
+dpkg-buildpackage -b -rfakeroot -us -uc
+```
+>>>>>>> origin/master
 
 ## LICENSE
 
@@ -176,5 +238,5 @@ GPL-2 on Realtek driver and the Debian packing.
 
 ## References
 
-- [Realtek r8125 driver release page](https://www.realtek.com/en/component/zoo/category/network-interface-controllers-10-100-1000m-gigabit-ethernet-pci-express-software)
+- [Realtek r8125 driver release page](https://www.realtek.com/Download/List?cate_id=584)
 - [ParrotSec's realtek-rtl88xxau-dkms, where got hint from](https://github.com/ParrotSec/realtek-rtl88xxau-dkms)
