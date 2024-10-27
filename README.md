@@ -117,7 +117,7 @@ Finally, reboot to take effect.
 You can build yourself this after installing some dependencies including `dkms`.
 
 ```bash
-sudo apt install devscripts debmake debhelper build-essential dkms
+sudo apt install devscripts debmake debhelper build-essential dkms dh-dkms
 ```
 
 ```bash
