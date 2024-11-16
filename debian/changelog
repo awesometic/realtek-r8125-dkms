@@ -1,3 +1,10 @@
+realtek-r8125-dkms (9.014.01-1) stable; urgency=medium
+
+  * Update Realtek r8125 driver to 9.014.01
+  * Remove deprecated flag REMAKE_INITRD
+
+ -- Deokgyu Yang <secugyu@gmail.com>  Sat, 16 Nov 2024 19:43:04 +0900
+
 realtek-r8125-dkms (9.013.02-2) stable; urgency=medium
 
   * Rename BASEDIR to BSRC in dkms.conf
