@@ -91,8 +91,6 @@ int rtl8125_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
         struct rtl8125_private *tp = netdev_priv(dev);
         int ret = -EOPNOTSUPP;
 
-        netif_info(tp, drv, tp->dev, "rss get rxnfc\n");
-
         if (!(dev->features & NETIF_F_RXHASH))
                 return ret;
 
@@ -158,8 +156,6 @@ static int rtl8125_set_rss_hash_opt(struct rtl8125_private *tp,
                                     struct ethtool_rxnfc *nfc)
 {
         u32 rss_flags = tp->rss_flags;
-
-        netif_info(tp, drv, tp->dev, "rss set hash\n");
 
         /*
          * RSS does not support anything other than hashing
@@ -271,8 +267,6 @@ int rtl8125_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
         struct rtl8125_private *tp = netdev_priv(dev);
         int ret = -EOPNOTSUPP;
 
-        netif_info(tp, drv, tp->dev, "rss set rxnfc\n");
-
         if (!(dev->features & NETIF_F_RXHASH))
                 return ret;
 
@@ -296,8 +290,6 @@ u32 rtl8125_get_rxfh_key_size(struct net_device *dev)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
 
-        netif_info(tp, drv, tp->dev, "rss get key size\n");
-
         if (!(dev->features & NETIF_F_RXHASH))
                 return 0;
 
@@ -307,8 +299,6 @@ u32 rtl8125_get_rxfh_key_size(struct net_device *dev)
 u32 rtl8125_rss_indir_size(struct net_device *dev)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
-
-        netif_info(tp, drv, tp->dev, "rss get indir tbl size\n");
 
         if (!(dev->features & NETIF_F_RXHASH))
                 return 0;
@@ -369,8 +359,6 @@ int rtl8125_get_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh)
 {
         struct rtl8125_private *tp = netdev_priv(dev);
 
-        netif_info(tp, drv, tp->dev, "rss get rxfh\n");
-
         if (!(dev->features & NETIF_F_RXHASH))
                 return -EOPNOTSUPP;
 
@@ -391,8 +379,6 @@ int rtl8125_set_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh,
         struct rtl8125_private *tp = netdev_priv(dev);
         int i;
         u32 reta_entries = rtl8125_rss_indir_tbl_entries(tp);
-
-        netif_info(tp, drv, tp->dev, "rss set rxfh\n");
 
         /* We require at least one supported parameter to be changed and no
          * change in any of the unsupported parameters
@@ -429,8 +415,6 @@ int rtl8125_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
 {
         struct rtl8125_private *tp = netdev_priv(dev);
 
-        netif_info(tp, drv, tp->dev, "rss get rxfh\n");
-
         if (!(dev->features & NETIF_F_RXHASH))
                 return -EOPNOTSUPP;
 
@@ -452,8 +436,6 @@ int rtl8125_set_rxfh(struct net_device *dev, const u32 *indir,
         struct rtl8125_private *tp = netdev_priv(dev);
         int i;
         u32 reta_entries = rtl8125_rss_indir_tbl_entries(tp);
-
-        netif_info(tp, drv, tp->dev, "rss set rxfh\n");
 
         /* We require at least one supported parameter to be changed and no
          * change in any of the unsupported parameters
@@ -506,10 +488,10 @@ static u32 rtl8125_get_rx_desc_hash(struct rtl8125_private *tp,
 #define RTL8125_RXS_RSS_L3_TYPE_MASK (RXS_8125_RSS_IPV4 | RXS_8125_RSS_IPV6)
 #define RTL8125_RXS_RSS_L4_TYPE_MASK (RXS_8125_RSS_TCP | RXS_8125B_RSS_UDP)
 
-#define RXS_8125B_RSS_UDP_V4 BIT(11)
-#define RXS_8125_RSS_IPV4_V4 BIT(12)
-#define RXS_8125_RSS_IPV6_V4 BIT(13)
-#define RXS_8125_RSS_TCP_V4 BIT(14)
+#define RXS_8125B_RSS_UDP_V4 BIT(27)
+#define RXS_8125_RSS_IPV4_V4 BIT(28)
+#define RXS_8125_RSS_IPV6_V4 BIT(29)
+#define RXS_8125_RSS_TCP_V4 BIT(30)
 #define RTL8125_RXS_RSS_L3_TYPE_MASK_V4 (RXS_8125_RSS_IPV4_V4 | RXS_8125_RSS_IPV6_V4)
 #define RTL8125_RXS_RSS_L4_TYPE_MASK_V4 (RXS_8125_RSS_TCP_V4 | RXS_8125B_RSS_UDP_V4)
 static void rtl8125_rx_hash_v3(struct rtl8125_private *tp,
@@ -535,12 +517,12 @@ static void rtl8125_rx_hash_v4(struct rtl8125_private *tp,
                                struct RxDescV4 *descv4,
                                struct sk_buff *skb)
 {
-        u16 rss_header_info;
+        u32 rss_header_info;
 
         if (!(tp->dev->features & NETIF_F_RXHASH))
                 return;
 
-        rss_header_info = le16_to_cpu(descv4->RxDescNormalDDWord1.RSSInfo);
+        rss_header_info = le32_to_cpu(descv4->RxDescNormalDDWord1.RSSInfo);
 
         if (!(rss_header_info & RTL8125_RXS_RSS_L3_TYPE_MASK_V4))
                 return;

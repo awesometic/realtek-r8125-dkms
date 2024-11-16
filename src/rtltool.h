@@ -63,6 +63,9 @@ enum rtl_cmd {
         RTL_DIRECT_READ_PHY_OCP,
         RTL_DIRECT_WRITE_PHY_OCP,
 
+        RTL_READ_FIBER_PHY,
+        RTL_WRITE_FIBER_PHY,
+
         RTLTOOL_INVALID
 };
 

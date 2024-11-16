@@ -155,7 +155,6 @@ static int rtl8125_phc_adjtime(struct ptp_clock_info *ptp, s64 delta)
         return ret;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
 /*
 1ppm means every 125MHz plus 125Hz. It also means every 8ns minus 8ns*10^(-6)
 
@@ -199,6 +198,21 @@ static int _rtl8125_phc_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
         return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
+static int rtl8125_ptp_adjfine(struct ptp_clock_info *ptp, long scaled_ppm)
+{
+        s32 ppb = scaled_ppm_to_ppb(scaled_ppm);
+
+        if (ppb > ptp->max_adj || ppb < -ptp->max_adj)
+                return -EINVAL;
+
+        rtnl_lock();
+        _rtl8125_phc_adjfreq(ptp, ppb);
+        rtnl_unlock();
+
+        return 0;
+}
+#else
 static int rtl8125_phc_adjfreq(struct ptp_clock_info *ptp, s32 delta)
 {
         //struct rtl8125_private *tp = container_of(ptp, struct rtl8125_private, ptp_clock_info);
@@ -208,12 +222,32 @@ static int rtl8125_phc_adjfreq(struct ptp_clock_info *ptp, s32 delta)
         if (delta > ptp->max_adj || delta < -ptp->max_adj)
                 return -EINVAL;
 
+        rtnl_lock();
         _rtl8125_phc_adjfreq(ptp, delta);
+        rtnl_unlock();
 
         return 0;
 }
-#endif //LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0) */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+static int rtl8125_phc_gettime(struct ptp_clock_info *ptp, struct timespec64 *ts64,
+                               struct ptp_system_timestamp *sts)
+{
+        struct rtl8125_private *tp = container_of(ptp, struct rtl8125_private, ptp_clock_info);
+        int ret;
+
+        //netif_info(tp, drv, tp->dev, "phc get ts\n");
+
+        rtnl_lock();
+        ptp_read_system_prets(sts);
+        ret = _rtl8125_phc_gettime(tp, ts64);
+        ptp_read_system_postts(sts);
+        rtnl_unlock();
+
+        return ret;
+}
+#else
 static int rtl8125_phc_gettime(struct ptp_clock_info *ptp, struct timespec64 *ts64)
 {
         struct rtl8125_private *tp = container_of(ptp, struct rtl8125_private, ptp_clock_info);
@@ -227,6 +261,7 @@ static int rtl8125_phc_gettime(struct ptp_clock_info *ptp, struct timespec64 *ts
 
         return ret;
 }
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0) */
 
 static int rtl8125_phc_settime(struct ptp_clock_info *ptp,
                                const struct timespec64 *ts64)
@@ -311,11 +346,17 @@ static const struct ptp_clock_info rtl_ptp_clock_info = {
         .n_per_out  = 0,
         .n_pins     = 0,
         .pps        = 1,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
+        .adjfine   = rtl8125_ptp_adjfine,
+#else
         .adjfreq    = rtl8125_phc_adjfreq,
-#endif //LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0) */
         .adjtime    = rtl8125_phc_adjtime,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+        .gettimex64  = rtl8125_phc_gettime,
+#else
         .gettime64  = rtl8125_phc_gettime,
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0) */
         .settime64  = rtl8125_phc_settime,
         .enable     = rtl8125_phc_enable,
 };

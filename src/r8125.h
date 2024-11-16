@@ -41,7 +41,12 @@
 #include <linux/version.h>
 #include "r8125_dash.h"
 #include "r8125_realwow.h"
+#ifdef ENABLE_FIBER_SUPPORT
+#include "r8125_fiber.h"
+#endif /* ENABLE_FIBER_SUPPORT */
+#ifdef ENABLE_PTP_SUPPORT
 #include "r8125_ptp.h"
+#endif
 #include "r8125_rss.h"
 #ifdef ENABLE_LIB_SUPPORT
 #include "r8125_lib.h"
@@ -50,6 +55,75 @@
 #ifndef fallthrough
 #define fallthrough
 #endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
+#define netif_xmit_stopped netif_tx_queue_stopped
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0) */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
+#ifndef MDIO_AN_EEE_ADV_100TX
+#define MDIO_AN_EEE_ADV_100TX	0x0002	/* Advertise 100TX EEE cap */
+#endif
+#ifndef MDIO_AN_EEE_ADV_1000T
+#define MDIO_AN_EEE_ADV_1000T	0x0004	/* Advertise 1000T EEE cap */
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
+#define MDIO_EEE_100TX		MDIO_AN_EEE_ADV_100TX	/* 100TX EEE cap */
+#define MDIO_EEE_1000T		MDIO_AN_EEE_ADV_1000T	/* 1000T EEE cap */
+#define MDIO_EEE_10GT		0x0008	/* 10GT EEE cap */
+#define MDIO_EEE_1000KX		0x0010	/* 1000KX EEE cap */
+#define MDIO_EEE_10GKX4		0x0020	/* 10G KX4 EEE cap */
+#define MDIO_EEE_10GKR		0x0040	/* 10G KR EEE cap */
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0) */
+
+static inline u32 mmd_eee_adv_to_ethtool_adv_t(u16 eee_adv)
+{
+        u32 adv = 0;
+
+        if (eee_adv & MDIO_EEE_100TX)
+                adv |= ADVERTISED_100baseT_Full;
+        if (eee_adv & MDIO_EEE_1000T)
+                adv |= ADVERTISED_1000baseT_Full;
+        if (eee_adv & MDIO_EEE_10GT)
+                adv |= ADVERTISED_10000baseT_Full;
+        if (eee_adv & MDIO_EEE_1000KX)
+                adv |= ADVERTISED_1000baseKX_Full;
+        if (eee_adv & MDIO_EEE_10GKX4)
+                adv |= ADVERTISED_10000baseKX4_Full;
+        if (eee_adv & MDIO_EEE_10GKR)
+                adv |= ADVERTISED_10000baseKR_Full;
+
+        return adv;
+}
+
+static inline u16 ethtool_adv_to_mmd_eee_adv_t(u32 adv)
+{
+        u16 reg = 0;
+
+        if (adv & ADVERTISED_100baseT_Full)
+                reg |= MDIO_EEE_100TX;
+        if (adv & ADVERTISED_1000baseT_Full)
+                reg |= MDIO_EEE_1000T;
+        if (adv & ADVERTISED_10000baseT_Full)
+                reg |= MDIO_EEE_10GT;
+        if (adv & ADVERTISED_1000baseKX_Full)
+                reg |= MDIO_EEE_1000KX;
+        if (adv & ADVERTISED_10000baseKX4_Full)
+                reg |= MDIO_EEE_10GKX4;
+        if (adv & ADVERTISED_10000baseKR_Full)
+                reg |= MDIO_EEE_10GKR;
+
+        return reg;
+}
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0) */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
+static inline bool skb_transport_header_was_set(const struct sk_buff *skb)
+{
+        return skb->transport_header != ~0U;
+}
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0) */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0)
 static inline
@@ -93,13 +167,11 @@ static inline unsigned char *skb_checksum_start(const struct sk_buff *skb)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
 static inline void netdev_tx_sent_queue(struct netdev_queue *dev_queue,
                                         unsigned int bytes)
-{
-}
+{}
 static inline void netdev_tx_completed_queue(struct netdev_queue *dev_queue,
                 unsigned int pkts,
                 unsigned int bytes)
-{
-}
+{}
 static inline void netdev_tx_reset_queue(struct netdev_queue *q) {}
 #endif
 
@@ -112,11 +184,25 @@ static inline void netdev_tx_reset_queue(struct netdev_queue *q) {}
 #define netif_testing_off(dev)
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+#define netdev_sw_irq_coalesce_default_on(dev)
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0) */
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 typedef int netdev_tx_t;
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,12,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,9)
+static inline bool page_is_pfmemalloc(struct page *page)
+{
+        /*
+         * Page index cannot be this large so this must be
+         * a pfmemalloc page.
+         */
+        return page->index == -1UL;
+}
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4,1,9) */
 static inline bool dev_page_is_reusable(struct page *page)
 {
         return likely(page_to_nid(page) == numa_mem_id() &&
@@ -275,7 +361,7 @@ do { \
 #define ENABLE_R8125_PROCFS
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 #define ENABLE_R8125_SYSFS
 #endif
 
@@ -390,6 +476,23 @@ do { \
 #define  MDIO_EEE_2_5GT  0x0001
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+#define ethtool_keee ethtool_eee
+#define rtl8125_ethtool_adv_to_mmd_eee_adv_cap1_t ethtool_adv_to_mmd_eee_adv_t
+static inline u32 rtl8125_ethtool_adv_to_mmd_eee_adv_cap2_t(u32 adv)
+{
+        u32 result = 0;
+
+        if (adv & SUPPORTED_2500baseX_Full)
+                result |= MDIO_EEE_2_5GT;
+
+        return result;
+}
+#else
+#define rtl8125_ethtool_adv_to_mmd_eee_adv_cap1_t linkmode_to_mii_eee_cap1_t
+#define rtl8125_ethtool_adv_to_mmd_eee_adv_cap2_t linkmode_to_mii_eee_cap2_t
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29)
 #ifdef CONFIG_NET_POLL_CONTROLLER
 #define RTL_NET_POLL_CONTROLLER dev->poll_controller=rtl8125_netpoll
@@ -474,7 +577,7 @@ do { \
 #define RSS_SUFFIX ""
 #endif
 
-#define RTL8125_VERSION "9.013.02" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
+#define RTL8125_VERSION "9.014.01" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
 #define MODULENAME "r8125"
 #define PFX MODULENAME ": "
 
@@ -595,7 +698,9 @@ This is free software, and you are welcome to redistribute it under certain cond
 #endif
 
 #define R8125_MAX_TX_QUEUES (2)
-#define R8125_MAX_RX_QUEUES (4)
+#define R8125_MAX_RX_QUEUES_V2 (4)
+#define R8125_MAX_RX_QUEUES_V3 (16)
+#define R8125_MAX_RX_QUEUES R8125_MAX_RX_QUEUES_V3
 #define R8125_MAX_QUEUES R8125_MAX_RX_QUEUES
 
 #define OCP_STD_PHY_BASE	0xa400
@@ -714,6 +819,10 @@ This is free software, and you are welcome to redistribute it under certain cond
 #ifndef READ_ONCE
 #define READ_ONCE(var) (*((volatile typeof(var) *)(&(var))))
 #endif
+
+#define R8125_LINK_STATE_OFF 0
+#define R8125_LINK_STATE_ON 1
+#define R8125_LINK_STATE_UNKNOWN 2
 
 /*****************************************************************************/
 
@@ -1925,8 +2034,7 @@ struct RxDescV4 {
                 u64   addr;
 
                 struct {
-                        u32 rsv1: 27;
-                        u32 RSSInfo: 5;
+                        u32 RSSInfo;
                         u32 RSSResult;
                 } RxDescNormalDDWord1;
         };
@@ -2288,6 +2396,20 @@ enum rtl8125_state_t {
         __RTL8125_PTP_TX_IN_PROGRESS,
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
+struct ethtool_eee {
+        __u32	cmd;
+        __u32	supported;
+        __u32	advertised;
+        __u32	lp_advertised;
+        __u32	eee_active;
+        __u32	eee_enabled;
+        __u32	tx_lpi_enabled;
+        __u32	tx_lpi_timer;
+        __u32	reserved[2];
+};
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0) */
+
 struct rtl8125_private {
         void __iomem *mmio_addr;    /* memory map physical address */
         struct pci_dev *pci_dev;    /* Index of PCI device */
@@ -2347,8 +2469,8 @@ struct rtl8125_private {
         u16 cp_cmd;
         u32 intr_mask;
         u32 timer_intr_mask;
-        u16 isr_reg[R8125_MAX_QUEUES];
-        u16 imr_reg[R8125_MAX_QUEUES];
+        u16 isr_reg[R8125_MAX_MSIX_VEC];
+        u16 imr_reg[R8125_MAX_MSIX_VEC];
         int phy_auto_nego_reg;
         int phy_1000_ctrl_reg;
         int phy_2500_ctrl_reg;
@@ -2485,7 +2607,6 @@ struct rtl8125_private {
         u8 HwPkgDet;
         u8 HwSuppOcpChannelVer;
         u8 AllowAccessDashOcp;
-        void __iomem *mapped_cmac_ioaddr; /* mapped cmac memory map physical address */
         void __iomem *cmac_ioaddr; /* cmac memory map physical address */
 
 #ifdef ENABLE_DASH_SUPPORT
@@ -2569,7 +2690,7 @@ struct rtl8125_private {
         //Realwow--------------
 #endif //ENABLE_REALWOW_SUPPORT
 
-        struct ethtool_eee eee;
+        struct ethtool_keee eee;
 
 #ifdef ENABLE_R8125_PROCFS
         //Procfs support
@@ -2640,7 +2761,7 @@ rtl8125_num_lib_rx_rings(struct rtl8125_private *tp)
 {
         int count, i;
 
-        for (count = 0, i = tp->num_rx_rings; i < tp->HwSuppNumRxQueues; i++)
+        for (count = 0, i = 0; i < tp->HwSuppNumRxQueues; i++)
                 if(tp->lib_rx_ring[i].enabled)
                         count++;
 
@@ -2670,7 +2791,13 @@ rtl8125_tot_tx_rings(struct rtl8125_private *tp)
 static inline unsigned int
 rtl8125_tot_rx_rings(struct rtl8125_private *tp)
 {
-        return tp->num_rx_rings + rtl8125_num_lib_rx_rings(tp);
+        unsigned int num_lib_rx_rings;
+
+        num_lib_rx_rings = rtl8125_num_lib_rx_rings(tp);
+        if (num_lib_rx_rings > 0)
+                return num_lib_rx_rings;
+        else
+                return tp->num_rx_rings;
 }
 
 static inline struct netdev_queue *txring_txq(const struct rtl8125_tx_ring *ring)
@@ -2732,8 +2859,8 @@ enum mcfg {
 #define NIC_RAMCODE_VERSION_CFG_METHOD_5 (0x0b99)
 #define NIC_RAMCODE_VERSION_CFG_METHOD_8 (0x0013)
 #define NIC_RAMCODE_VERSION_CFG_METHOD_9 (0x0001)
-#define NIC_RAMCODE_VERSION_CFG_METHOD_10 (0x0007)
-#define NIC_RAMCODE_VERSION_CFG_METHOD_11 (0x0001)
+#define NIC_RAMCODE_VERSION_CFG_METHOD_10 (0x0027)
+#define NIC_RAMCODE_VERSION_CFG_METHOD_11 (0x0027)
 
 //hwoptimize
 #define HW_PATCH_SOC_LAN (BIT_0)
@@ -2832,6 +2959,9 @@ void rtl8125_enable_hw_linkchg_interrupt(struct rtl8125_private *tp);
 int rtl8125_dump_tally_counter(struct rtl8125_private *tp, dma_addr_t paddr);
 void rtl8125_enable_napi(struct rtl8125_private *tp);
 void _rtl8125_wait_for_quiescence(struct net_device *dev);
+
+void rtl8125_clear_mac_ocp_bit(struct rtl8125_private *tp, u16 addr, u16 mask);
+void rtl8125_set_mac_ocp_bit(struct rtl8125_private *tp, u16 addr, u16 mask);
 
 #ifndef ENABLE_LIB_SUPPORT
 static inline void rtl8125_lib_reset_prepare(struct rtl8125_private *tp) { }
