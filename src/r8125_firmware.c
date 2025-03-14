@@ -231,7 +231,7 @@ void rtl8125_fw_write_firmware(struct rtl8125_private *tp, struct rtl8125_fw *rt
                         index += regno;
                         break;
                 case PHY_DELAY_MS:
-                        mdelay(data);
+                        fsleep(1000 * data);
                         break;
                 }
         }
