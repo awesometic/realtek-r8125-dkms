@@ -55,6 +55,11 @@ int rtl8125_tool_ioctl(struct rtl8125_private *tp, struct ifreq *ifr)
         ret = 0;
         switch (my_cmd.cmd) {
         case RTLTOOL_READ_MAC:
+                if ((my_cmd.offset + my_cmd.len) > pci_resource_len(tp->pci_dev, 2)) {
+                        ret = -EINVAL;
+                        break;
+                }
+
                 if (my_cmd.len==1)
                         my_cmd.data = readb(tp->mmio_addr+my_cmd.offset);
                 else if (my_cmd.len==2)
@@ -73,6 +78,11 @@ int rtl8125_tool_ioctl(struct rtl8125_private *tp, struct ifreq *ifr)
                 break;
 
         case RTLTOOL_WRITE_MAC:
+                if ((my_cmd.offset + my_cmd.len) > pci_resource_len(tp->pci_dev, 2)) {
+                        ret = -EINVAL;
+                        break;
+                }
+
                 if (my_cmd.len==1)
                         writeb(my_cmd.data, tp->mmio_addr+my_cmd.offset);
                 else if (my_cmd.len==2)
