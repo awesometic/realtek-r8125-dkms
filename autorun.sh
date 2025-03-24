@@ -15,14 +15,14 @@ echo
 echo "Check old driver and unload it."
 check=`lsmod | grep r8169`
 if [ "$check" != "" ]; then
-        echo "rmmod r8169"
-        /sbin/rmmod r8169
+	echo "rmmod r8169"
+	/sbin/rmmod r8169
 fi
 
 check=`lsmod | grep r8125`
 if [ "$check" != "" ]; then
-        echo "rmmod r8125"
-        /sbin/rmmod r8125
+	echo "rmmod r8125"
+	/sbin/rmmod r8125
 fi
 
 echo "Build the module and install"
@@ -50,6 +50,21 @@ elif [ "$module" != "r8169" ]; then
 		else
 			echo "rename r8169.ko to r8169.bak"
 			mv $TARGET_PATH/r8169.ko $TARGET_PATH/r8169.bak
+		fi
+	fi
+	if test -e $TARGET_PATH/r8169.ko.zst ; then
+		echo "Backup r8169.ko.zst"
+		if test -e $TARGET_PATH/r8169.zst.bak ; then
+			i=0
+			while test -e $TARGET_PATH/r8169.zst.bak$i
+			do
+				i=$(($i+1))
+			done
+			echo "rename r8169.ko.zst to r8169.zst.bak$i"
+			mv $TARGET_PATH/r8169.ko.zst $TARGET_PATH/r8169.zst.bak$i
+		else
+			echo "rename r8169.ko.zst to r8169.zst.bak"
+			mv $TARGET_PATH/r8169.ko.zst $TARGET_PATH/r8169.zst.bak
 		fi
 	fi
 fi
@@ -84,4 +99,3 @@ fi
 
 echo "Completed."
 exit 0
-
