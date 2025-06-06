@@ -4,7 +4,7 @@
 # r8125 is the Linux device driver released for Realtek 2.5 Gigabit Ethernet
 # controllers with PCI-Express interface.
 #
-# Copyright(c) 2024 Realtek Semiconductor Corp. All rights reserved.
+# Copyright(c) 2025 Realtek Semiconductor Corp. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free
@@ -347,15 +347,35 @@ rtl8125_fiber_phy_reset(struct rtl8125_private *tp)
 }
 
 static void
-rtl8125_hw_rtl8221d_phy_config(struct rtl8125_private *tp)
+rtl8125_fiber_set_rtl8221d_phy_mode(struct rtl8125_private *tp, u16 mode)
 {
-        rtl8125_fiber_reset_gpio_c45(tp);
+        mode &= 0x3f;
 
         rtl8125_fiber_clear_phy_bit(tp, R8125_MAKE_C45_ADDR(30, 0x75F3), BIT_0);
         rtl8125_fiber_clear_and_set_phy_bit(tp,
                                             R8125_MAKE_C45_ADDR(30, 0x697A),
                                             0x003F,
-                                            0x0002);
+                                            mode);
+}
+
+static void
+rtl8125_fiber_set_phy_mode(struct rtl8125_private *tp, u16 mode)
+{
+        switch (tp->HwFiberModeVer) {
+        case FIBER_MODE_RTL8125D_RTL8221D:
+                rtl8125_fiber_set_rtl8221d_phy_mode(tp, mode);
+                break;
+        default:
+                break;
+        }
+}
+
+static void
+rtl8125_hw_rtl8221d_phy_config(struct rtl8125_private *tp)
+{
+        rtl8125_fiber_reset_gpio_c45(tp);
+
+        rtl8125_fiber_set_phy_mode(tp, (tp->speed == SPEED_2500) ? 0x02 : 0x04);
 
 
         rtl8125_fiber_clear_phy_bit(tp, R8125_MAKE_C45_ADDR(0x07, 0x3C), (BIT_2 | BIT_1));
@@ -371,6 +391,8 @@ rtl8125_hw_fiber_phy_config(struct rtl8125_private *tp)
         switch (tp->HwFiberModeVer) {
         case FIBER_MODE_RTL8125D_RTL8221D:
                 rtl8125_hw_rtl8221d_phy_config(tp);
+                break;
+        default:
                 break;
         }
 }
