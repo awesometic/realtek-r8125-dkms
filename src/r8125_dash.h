@@ -5,7 +5,7 @@
 # r8125 is the Linux device driver released for Realtek 2.5 Gigabit Ethernet
 # controllers with PCI-Express interface.
 #
-# Copyright(c) 2024 Realtek Semiconductor Corp. All rights reserved.
+# Copyright(c) 2025 Realtek Semiconductor Corp. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free
@@ -81,61 +81,8 @@ struct rtl_dash_ioctl_struct {
         };
 };
 
-struct settings_ipv4 {
-        __u32	IPv4addr;
-        __u32	IPv4mask;
-        __u32	IPv4Gateway;
-};
-
-struct settings_ipv6 {
-        __u32	reserved;
-        __u32	prefixLen;
-        __u16	IPv6addr[8];
-        __u16	IPv6Gateway[8];
-};
-
-struct settings_ext_snmp {
-        __u16	index;
-        __u16	oid_get_len;
-        __u8	oid_for_get[24];
-        __u8	reserved0[26];
-        __u16	value_len;
-        __u8	value[256];
-        __u8	supported;
-        __u8	reserved1[27];
-};
-
-struct wakeup_pattern {
-        __u8	index;
-        __u8	valid;
-        __u8	start;
-        __u8	length;
-        __u8	name[36];
-        __u8	mask[16];
-        __u8	pattern[128];
-        __u32	reserved[2];
-};
-
-typedef struct _RX_DASH_FROM_FW_DESC {
-        u16 length;
-        u8 statusLowByte;
-        u8 statusHighByte;
-        u32 resv;
-        u64 BufferAddress;
-}
-RX_DASH_FROM_FW_DESC, *PRX_DASH_FROM_FW_DESC;
-
-typedef struct _TX_DASH_SEND_FW_DESC {
-        u16 length;
-        u8 statusLowByte;
-        u8 statusHighByte;
-        u32 resv;
-        u64 BufferAddress;
-}
-TX_DASH_SEND_FW_DESC, *PTX_DASH_SEND_FW_DESC;
-
 typedef struct _OSOOBHdr {
-        u32 len;
+        __le32 len;
         u8 type;
         u8 flag;
         u8 hostReqV;
@@ -156,25 +103,7 @@ RX_DASH_BUFFER_TYPE_2, *PRX_DASH_BUFFER_TYPE_2;
 #define ALIGN_256               (0xff)
 #define ALIGN_4096              (0xfff)
 
-#define OCP_REG_CONFIG0 (0x10)
-#define OCP_REG_CONFIG0_REV_F (0xB8)
-#define OCP_REG_DASH_POLL (0x30)
-#define OCP_REG_HOST_REQ (0x34)
-#define OCP_REG_DASH_REQ (0x35)
-#define OCP_REG_CR (0x36)
-#define OCP_REG_DMEMSTA (0x38)
-#define OCP_REG_GPHYAR (0x60)
 #define OCP_REG_FIRMWARE_MAJOR_VERSION (0x120)
-
-
-#define OCP_REG_CONFIG0_DASHEN           BIT_15
-#define OCP_REG_CONFIG0_OOBRESET         BIT_14
-#define OCP_REG_CONFIG0_APRDY            BIT_13
-#define OCP_REG_CONFIG0_FIRMWARERDY      BIT_12
-#define OCP_REG_CONFIG0_DRIVERRDY        BIT_11
-#define OCP_REG_CONFIG0_OOB_WDT          BIT_9
-#define OCP_REG_CONFIG0_DRV_WAIT_OOB     BIT_8
-#define OCP_REG_CONFIG0_TLSEN            BIT_7
 
 #define HW_DASH_SUPPORT_DASH(_M)        ((_M)->HwSuppDashVer > 0)
 #define HW_DASH_SUPPORT_TYPE_1(_M)      ((_M)->HwSuppDashVer == 1)
@@ -190,10 +119,6 @@ RX_DASH_BUFFER_TYPE_2, *PRX_DASH_BUFFER_TYPE_2;
 #define RECV_FROM_FW_BUF_SIZE (1520)
 #define SEND_TO_FW_BUF_SIZE (1520)
 
-#define RX_DASH_FROM_FW_OWN BIT_15
-#define TX_DASH_SEND_FW_OWN BIT_15
-#define TX_DASH_SEND_FW_OWN_HIGHBYTE BIT_7
-
 #define TXS_CC3_0       (BIT_0|BIT_1|BIT_2|BIT_3)
 #define TXS_EXC         BIT_4
 #define TXS_LNKF        BIT_5
@@ -208,61 +133,64 @@ RX_DASH_BUFFER_TYPE_2, *PRX_DASH_BUFFER_TYPE_2;
 
 #define TPPool_HRDY     0x20
 
-#define HostReqReg (0xC0)
-#define SystemMasterDescStartAddrLow (0xF0)
-#define SystemMasterDescStartAddrHigh (0xF4)
-#define SystemSlaveDescStartAddrLow (0xF8)
-#define SystemSlaveDescStartAddrHigh (0xFC)
-
-//DASH Request Type
-#define WSMANREG 0x01
-#define OSPUSHDATA 0x02
-
 #define RXS_OWN      BIT_15
 #define RXS_EOR      BIT_14
 #define RXS_FS       BIT_13
 #define RXS_LS       BIT_12
 
-#define ISRIMR_DP_DASH_OK BIT_15
-#define ISRIMR_DP_HOST_OK BIT_13
-#define ISRIMR_DP_REQSYS_OK BIT_11
-
 #define ISRIMR_DASH_INTR_EN BIT_12
-#define ISRIMR_DASH_INTR_CMAC_RESET BIT_15
-
-#define ISRIMR_DASH_TYPE2_ROK BIT_0
-#define ISRIMR_DASH_TYPE2_RDU BIT_1
-#define ISRIMR_DASH_TYPE2_TOK BIT_2
-#define ISRIMR_DASH_TYPE2_TDU BIT_3
-#define ISRIMR_DASH_TYPE2_TX_FIFO_FULL BIT_4
-#define ISRIMR_DASH_TYPE2_TX_DISABLE_IDLE BIT_5
-#define ISRIMR_DASH_TYPE2_RX_DISABLE_IDLE BIT_6
-
-#define CMAC_OOB_STOP 0x25
-#define CMAC_OOB_INIT 0x26
-#define CMAC_OOB_RESET 0x2a
 
 #define NO_BASE_ADDRESS 0x00000000
-#define RTL8168FP_OOBMAC_BASE 0xBAF70000
-#define RTL8168FP_CMAC_IOBASE 0xBAF20000
-#define RTL8168FP_KVM_BASE 0xBAF80400
-#define CMAC_SYNC_REG 0x20
-#define CMAC_RXDESC_OFFSET 0x90    //RX: 0x90 - 0x98
-#define CMAC_TXDESC_OFFSET 0x98    //TX: 0x98 - 0x9F
 
-/* cmac write/read MMIO register */
-#define RTL_CMAC_W8(tp, reg, val8)   writeb ((val8), tp->cmac_ioaddr + (reg))
-#define RTL_CMAC_W16(tp, reg, val16) writew ((val16), tp->cmac_ioaddr + (reg))
-#define RTL_CMAC_W32(tp, reg, val32) writel ((val32), tp->cmac_ioaddr + (reg))
-#define RTL_CMAC_R8(tp, reg)     readb (tp->cmac_ioaddr + (reg))
-#define RTL_CMAC_R16(tp, reg)        readw (tp->cmac_ioaddr + (reg))
-#define RTL_CMAC_R32(tp, reg)        ((unsigned long) readl (tp->cmac_ioaddr + (reg)))
+/* IB2SOC registers */
+#define IPC2_SWISR_DRIVER_READY 0x05
+#define IPC2_SWISR_DRIVER_EXIT 0x06
+#define IPC2_SWISR_CLIENTTOOL_SYNC_HOSTNAME 0x20
+#define IPC2_SWISR_DIS_DASH 0x55
+#define IPC2_SWISR_EN_DASH 0x56
+
+#define IPC2_IB2SOC_SET 0x10
+#define IPC2_IB2SOC_DATA 0x14
+#define IPC2_IB2SOC_CMD 0x18
+#define IPC2_IB2SOC_IMR 0x1C
+
+/* IPC2 registers */
+#define IPC2_PCIE_BASE      0xC100
+#define IPC2_TX_SET_REG     IPC2_PCIE_BASE
+#define IPC2_TX_STATUS_REG  (IPC2_PCIE_BASE+0x04)
+#define IPC2_RX_STATUS_REG  (IPC2_PCIE_BASE+0x08)
+#define IPC2_RX_CLEAR_REG   (IPC2_PCIE_BASE+0x0C)
+#define IPC2_DATA_BASE      0x32000
+#define IPC2_BUFFER_LENGTH  0x1000
+#define IPC2_DATA_MASTER    IPC2_DATA_BASE                        //dash tx buffer base
+#define IPC2_DATA_SLAVE     (IPC2_DATA_BASE+IPC2_BUFFER_LENGTH)   //dash rx buffer base
+#define IPC2_TX_BUFFER      IPC2_DATA_MASTER
+#define IPC2_RX_BUFFER      IPC2_DATA_SLAVE
+
+#define IPC2_TX_SEND_BIT        BIT_0
+#define IPC2_TX_ACK_BIT         BIT_8
+#define IPC2_RX_ROK_BIT         BIT_0
+#define IPC2_RX_ACK_BIT         BIT_8
+
+/* IPC2 write/read MMIO register */
+#define RTL_DASH_IPC2_W8(tp, reg, val8)   RTL_W8(tp, reg, val8)
+#define RTL_DASH_IPC2_W16(tp, reg, val16) RTL_W16(tp, reg, val16)
+#define RTL_DASH_IPC2_W32(tp, reg, val32)  RTL_W32(tp, reg, val32)
+#define RTL_DASH_IPC2_R8(tp, reg)     RTL_R8(tp, reg)
+#define RTL_DASH_IPC2_R16(tp, reg)    RTL_R16(tp, reg)
+#define RTL_DASH_IPC2_R32(tp, reg)    RTL_R32(tp, reg)
+
+/* DASH OOB Header Type */
+#define DASH_OOB_HDR_TYPE_REQ 0x91
+#define DASH_OOB_HDR_TYPE_ACK 0x92
+
+struct  rtl8125_private;
 
 int rtl8125_dash_ioctl(struct net_device *dev, struct ifreq *ifr);
-void HandleDashInterrupt(struct net_device *dev);
-int AllocateDashShareMemory(struct net_device *dev);
-void FreeAllocatedDashShareMemory(struct net_device *dev);
-void DashHwInit(struct net_device *dev);
-
+bool rtl8125_check_dash_interrupt(struct rtl8125_private *tp);
+void rtl8125_handle_dash_interrupt(struct net_device *dev);
+void rtl8125_clear_ipc2_isr(struct rtl8125_private *tp);
+void rtl8125_set_ipc2_soc_imr_bit(struct rtl8125_private *tp, u16 mask);
+void rtl8125_clear_ipc2_soc_imr_bit(struct rtl8125_private *tp, u16 mask);
 
 #endif /* _LINUX_R8125_DASH_H */
