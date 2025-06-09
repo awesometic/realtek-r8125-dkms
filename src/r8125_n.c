@@ -204,7 +204,7 @@ static const struct {
 
 static struct pci_device_id rtl8125_pci_tbl[] = {
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8125), },
-        { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8126), .driver_data = RTL8125B },
+        { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8126), },
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x8162), },
         { PCI_DEVICE(PCI_VENDOR_ID_REALTEK, 0x3000), },
         {0,},
