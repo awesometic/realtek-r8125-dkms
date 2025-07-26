@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [[ $EUID -ne 0 ]]; then
-  echo "You must run this with superuser priviliges.  Try \"sudo ./dkms-install.sh\"" 2>&1
+  echo "You must run this with superuser privileges.  Try \"sudo ./dkms-install.sh\"" 2>&1
   exit 1
 else
   echo "About to run dkms install steps..."
