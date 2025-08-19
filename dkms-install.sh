@@ -9,7 +9,7 @@ fi
 
 DRV_DIR="$(pwd)"
 DRV_NAME=r8125
-DRV_VERSION=9.016.00
+DRV_VERSION=9.016.01
 KERNEL_VERSION="${KERNEL_VERSION:-$(uname -r)}"
 
 cp -r ${DRV_DIR} /usr/src/${DRV_NAME}-${DRV_VERSION}
