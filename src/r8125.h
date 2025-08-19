@@ -588,7 +588,7 @@ static inline u32 rtl8125_ethtool_adv_to_mmd_eee_adv_cap2_t(u32 adv)
 #define RSS_SUFFIX ""
 #endif
 
-#define RTL8125_VERSION "9.016.00" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
+#define RTL8125_VERSION "9.016.01" NAPI_SUFFIX DASH_SUFFIX REALWOW_SUFFIX PTP_SUFFIX RSS_SUFFIX
 #define MODULENAME "r8125"
 #define PFX MODULENAME ": "
 
@@ -2715,18 +2715,11 @@ struct rtl8125_private {
         u32 OobReqComplete;
         u32 OobAckComplete;
 
-        u8 RcvFwReqSysOkEvt;
-        u8 RcvFwDashOkEvt;
-        u8 SendFwHostOkEvt;
-
-        u8 DashFwDisableRx;
-
         u8 SendingToFw;
 
         u32 RecvFromDashFwCnt;
 
         u8 DashReqRegValue;
-        u16 HostReqValue;
 
         //Dash-----------------
 #endif //ENABLE_DASH_SUPPORT
@@ -2884,6 +2877,7 @@ enum mcfg {
         CFG_METHOD_10,
         CFG_METHOD_11,
         CFG_METHOD_12,
+        CFG_METHOD_13,
         CFG_METHOD_DEFAULT,
         CFG_METHOD_MAX
 };
